@@ -919,7 +919,13 @@ class Superset(BaseSupersetView):
     @event_logger.log_this
     @expose("/welcome/")
     def welcome(self) -> FlaskResponse:
-        """Personalized welcome page"""
+        """Redirect /superset/welcome/ to the Dashboards list.
+
+        Keeps backward compatibility with the per-user welcome_dashboard_id
+        UserAttribute (still honored when set), but for everyone else the
+        legacy welcome SPA page is replaced by the Dashboards list page —
+        matching the root path behavior in SupersetIndexView.
+        """
         if not g.user or not get_user_id():
             return redirect_to_login()
 
@@ -930,18 +936,7 @@ class Superset(BaseSupersetView):
         ):
             return self.dashboard(dashboard_id_or_slug=str(welcome_dashboard_id))
 
-        payload = {
-            "user": bootstrap_user_data(g.user, include_perms=True),
-            "common": common_bootstrap_payload(),
-        }
-
-        return self.render_template(
-            "superset/spa.html",
-            entry="spa",
-            bootstrap_data=json.dumps(
-                payload, default=json.pessimistic_json_iso_dttm_ser
-            ),
-        )
+        return redirect("/dashboard/list/")
 
     @has_access
     @event_logger.log_this
