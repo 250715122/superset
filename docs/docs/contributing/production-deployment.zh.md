@@ -442,7 +442,10 @@ pip install ./apache_superset-*.whl \
 pip install 'mysqlclient>=2.2.0' -c ./base-constraints.txt
 
 # 或 PostgreSQL
-# pip install 'psycopg2-binary>=2.9.9' -c ./base-constraints.txt
+pip install psycopg2 -c ./base-constraints.txt
+
+# StarRocks SQLAlchemy dialect
+pip install starrocks==1.3.3 -c ./base-constraints.txt
 
 # 生产 WSGI（gunicorn / gevent 已在 base.txt 中精确锁定，-c 会把它们装到 23.0.0 / 24.x）
 pip install 'gunicorn>=22.0.0' 'gevent>=24.2.1' -c ./base-constraints.txt
