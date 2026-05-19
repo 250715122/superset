@@ -33,7 +33,7 @@ under the License.
 本 fork 的代码基线为 apache/superset 长期维护分支 `upstream/6.0` @ `071ab203` (2026-03-13)。
 
 - 包含 `6.0.1rc1` 及其之后约 1 年的 apache 累积 bug fix / security patch / perf 修复
-- 自定义改动：根路径与 logo 重定向至 `/dashboard/list/`、`np.product` → `np.prod` 兼容修复、中文部署/开发文档
+- 自定义改动：根路径与 logo, `/superset/welcome/` 重定向至 `/dashboard/list/`、中文部署/开发文档
 - **不基于 6.1.x**：避免 `apache-superset-core` 子包拆分、StarRocks catalog 解析改写、新 home 视图 import 链路、上游遗留的 `np.product` 等已知踩坑
 
 后续吸取 apache 在 `6.0` 分支上累积的新修复，方法是手动 `git fetch upstream 6.0 && git merge`，而**不要**误升 6.1。
@@ -226,7 +226,7 @@ cd /opt/superset-build/superset-frontend
 nvm use 22
 
 npm ci --no-audit --no-fund                                  # 约 5-10 分钟
-NODE_OPTIONS="--max-old-space-size=4096" npm run build       # 约 8-15 分钟
+NODE_OPTIONS="--max-old-space-size=8192" npm run build       # about 6-15 min; this build used 6m32s
 
 # 验证
 ls -lh ../superset/static/assets/manifest.json
@@ -257,7 +257,7 @@ python -m build --wheel
 
 ls -lh dist/
 # 输出形如:
-# -rw-rw-r-- 1 user user  52M Jan 15 14:30 apache_superset-0.0.0.dev0-py3-none-any.whl
+# -rw-rw-r-- 1 user user  44M May 19 18:50 apache_superset-6.0.1-py3-none-any.whl
 ```
 
 打 wheel 做的事（你不需要关心，记结论即可）：
@@ -287,6 +287,34 @@ cd /opt/superset-build
 git rev-parse HEAD > dist/BUILD_COMMIT.txt
 cat dist/BUILD_COMMIT.txt        # 部署后用于核对哪个版本上线了
 ```
+
+### 4.7 Source-mode smoke test before wheel deployment
+
+Before shipping the wheel, run a minimal source-mode smoke test on the build host.
+This is not a full development setup; it only verifies import, migration against
+an isolated SQLite metadata DB, and the landing redirects.
+
+```bash
+cd /opt/superset-build
+python3 -m venv test-venv
+source test-venv/bin/activate
+pip install --upgrade pip setuptools wheel
+pip install -e .
+
+export SUPERSET_CONFIG_PATH=/opt/superset-build/superset_config_test.py
+superset db upgrade
+superset fab create-admin --username admin --firstname Admin --lastname User --email admin@localhost --password admin
+superset run -h 0.0.0.0 -p 8090 --no-debugger
+
+# Expected checks:
+#   GET /                  -> 302 /dashboard/list/
+#   GET /superset/welcome/ -> unauthenticated users go to /login/
+#   GET /superset/welcome/ after login -> 302 /dashboard/list/
+```
+
+For the `8e938696` build, the wheel pipeline produced
+`apache_superset-6.0.1-py3-none-any.whl` (44M). `npm run build` took about
+6m32s and the full wheel build took about 14 minutes on the build host.
 
 ---
 
@@ -328,7 +356,7 @@ scp /path/to/your/superset_config.py <user>@<cloud-host>:/opt/superset/
 > ...
 > ```
 >
-> 不带约束直接 `pip install xxx.whl`，pip 会按松散区间拉到当下允许范围内的最新版（例如 numpy 2.2.x），但 Superset 6.0 的源码仍在用 `np.product`（已在 numpy 2.0 被移除），导致 `superset version` 启动即崩。第七节会用 `-c` 把所有依赖锁回 `base.txt` 的版本。
+> Without constraints, pip may resolve newer dependencies such as numpy 2.x. Superset 6.0 was validated with the versions from `base.txt`; this playbook uses `-c` so the cloud host installs the same dependency set (numpy 1.26.4 for this wheel).
 
 > **多台云机器**：把 scp 改成循环（每台都要先建好 `/opt/superset/`）：
 >
@@ -419,6 +447,15 @@ pip install 'mysqlclient>=2.2.0' -c ./base-constraints.txt
 # 生产 WSGI（gunicorn / gevent 已在 base.txt 中精确锁定，-c 会把它们装到 23.0.0 / 24.x）
 pip install 'gunicorn>=22.0.0' 'gevent>=24.2.1' -c ./base-constraints.txt
 ```
+
+> If `SQLALCHEMY_DATABASE_URI` uses `mysql+pymysql://...`, install the MySQL driver after the wheel install:
+>
+> ```bash
+> source /opt/superset/venv/bin/activate
+> pip install PyMySQL
+> ```
+>
+> This is required by the cloud host config used in the 192.168.40.178 deployment.
 
 ### 7.3 自检
 
@@ -961,7 +998,7 @@ git reset --hard origin/master
 git rev-parse HEAD > dist/BUILD_COMMIT.txt
 
 cd superset-frontend
-NODE_OPTIONS="--max-old-space-size=4096" npm run build
+NODE_OPTIONS="--max-old-space-size=8192" npm run build
 cd /opt/superset-build
 
 source build-venv/bin/activate
@@ -1136,7 +1173,7 @@ File ".../numpy/__init__.py", line 414, in __getattr__
 AttributeError: module 'numpy' has no attribute 'product'
 ```
 
-**根本原因**：`np.product` 在 numpy 1.x 就已 deprecated（一直是 `np.prod` 的别名），numpy 2.0 起被**彻底移除**。apache/superset 6.0 仓库 [superset/utils/pandas_postprocessing/utils.py](../../../superset/utils/pandas_postprocessing/utils.py) 第 49 行仍在引用 `np.product`，遇到 numpy 2.x 就崩。本 fork 在 commit `4276600b` 中已修复，并随 wheel 一同发出，所以**只有跳过 `-c` 用了 numpy 2.x 且未升级到 fork 修复版**时才会触发。
+**Root cause**: This fork has not patched this code path; the 6.0.1 wheel relies on constraints (numpy 1.26.4). If numpy 2.x is allowed later, replace `np.product` with `np.prod` and rebuild the wheel.
 
 **触发场景**：第七节 `pip install xxx.whl` 时**漏带了 `-c constraints.txt`**，pip 按 wheel 内松散区间 `numpy>1.23.5, <2.3` 拉到了 numpy 2.2.x。
 
@@ -1226,7 +1263,7 @@ sudo mkdir -p /opt/superset && sudo chown $USER:$USER /opt/superset
 git clone --depth=1 https://github.com/250715122/superset.git /opt/superset
 cd /opt/superset/superset-frontend
 npm ci --no-audit --no-fund
-NODE_OPTIONS="--max-old-space-size=4096" npm run build
+NODE_OPTIONS="--max-old-space-size=8192" npm run build
 rm -rf node_modules                                # 装完释放磁盘
 
 cd /opt/superset
@@ -1279,7 +1316,7 @@ jobs:
         working-directory: superset-frontend
         run: |
           npm ci --no-audit --no-fund
-          NODE_OPTIONS="--max-old-space-size=4096" npm run build
+          NODE_OPTIONS="--max-old-space-size=8192" npm run build
 
       - name: Build wheel
         run: |
@@ -1295,8 +1332,9 @@ jobs:
 打 tag 即触发：
 
 ```bash
-git tag -a v6.0.1-bluetti-1 -m "first internal release on 6.0 baseline"
-git push origin v6.0.1-bluetti-1
+# Optional only. Current fork keeps no release tags; master points to 8e938696.
+# git tag -a v6.0.1-bluetti-1 -m "first internal release on 6.0 baseline"
+# git push origin v6.0.1-bluetti-1
 ```
 
 云服务器升级时：
@@ -1416,3 +1454,25 @@ export FLASK_APP=superset.app:create_app
 
 不强制，但**强烈建议**——`mysqlclient`、`psycopg2` 这些扩展是在云上装的，受云上 OS 的 glibc 影响；wheel 本体是纯 Python，与发行版无关。两边都 Ubuntu 22.04 是最稳的选择。
 
+
+### Existing DB revision mismatch during 6.0.1 deployment
+
+If `superset db current` fails with an error like:
+
+```text
+Error: Can't locate revision identified by '33d7e0e21daa'
+```
+
+the existing DB alembic revision is not in the 6.0.1 migration chain. Do not stamp the
+production DB down to the 6.0.1 head. A safer path is:
+
+1. Keep the old DB untouched and backed up.
+2. Create a new database, for example `superset_601_YYYYMMDD`.
+3. Point a temporary config at the new DB and run `superset db upgrade` with the 6.0.1 wheel.
+4. Copy data from the old DB to the new DB table-by-table using only common columns; skip
+   `alembic_version` so the new DB keeps the 6.0.1 head (`c233f5365c9e`).
+5. Run `superset init`, switch `superset_config.py` to the new DB, then restart systemd.
+
+This was the path used on `192.168.40.178`: old DB `superset` stayed intact, new DB
+`superset_601_20260519` was created, 50 tables copied successfully, and the service
+started on the new 6.0.1 schema.

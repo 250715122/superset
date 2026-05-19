@@ -248,7 +248,9 @@ pip install -r requirements/development.txt
 
 > 当 `pip install` 报 `Could not find a suitable TLS CA certificate bundle, invalid path: .../certifi/cacert.pem`，说明命中了 pip 26.x 的预发布 bug。删除 venv 重建并固定 `pip==25.2` 即可。
 
-完成后，本仓库已通过 `pyproject.toml` 的 `pip install -e .` 自动安装为 editable 模式（看 `pip list | grep apache-superset` 应有 `apache_superset 0.0.0.dev0`）。
+完成后，本仓库已通过 `pyproject.toml` 的 `pip install -e .` 自动安装为 editable 模式（看 `pip list | grep apache-superset` 应有 `apache_superset 6.0.1`）。
+
+For production-wheel smoke tests, a lightweight `pip install -e .` check with an isolated SQLite metadata DB is enough; it is not the same as the full development dependency install above.
 
 ---
 
