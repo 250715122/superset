@@ -48,8 +48,20 @@ import {
   EchartsPieChartPlugin,
   EchartsBoxPlotChartPlugin,
   EchartsAreaChartPlugin,
+  EchartsAreaGradientChartPlugin,
+  EchartsBarRaceChartPlugin,
+  EchartsCandlestickChartPlugin,
+  EchartsCustomChartPlugin,
+  EchartsGeoChoroplethChartPlugin,
+  EchartsGeoHeatmapChartPlugin,
+  EchartsGeoLinesChartPlugin,
+  EchartsGeoScatterChartPlugin,
+  EchartsGraphLabelOverlapChartPlugin,
+  EchartsNestedPieChartPlugin,
+  EchartsPunchCardChartPlugin,
   EchartsTimeseriesChartPlugin,
   EchartsTimeseriesBarChartPlugin,
+  EchartsTimeseriesBarAnimatedChartPlugin,
   EchartsTimeseriesLineChartPlugin,
   EchartsTimeseriesScatterChartPlugin,
   EchartsTimeseriesSmoothLineChartPlugin,
@@ -120,6 +132,9 @@ export default class MainPreset extends Preset {
         new EchartsGanttChartPlugin().configure({ key: VizType.Gantt }),
         new EchartsGaugeChartPlugin().configure({ key: VizType.Gauge }),
         new EchartsGraphChartPlugin().configure({ key: VizType.Graph }),
+        new EchartsGraphLabelOverlapChartPlugin().configure({
+          key: VizType.GraphLabelOverlap,
+        }),
         new EchartsRadarChartPlugin().configure({ key: VizType.Radar }),
         new EchartsMixedTimeseriesChartPlugin().configure({
           key: VizType.MixedTimeseries,
@@ -142,11 +157,17 @@ export default class MainPreset extends Preset {
         new EchartsAreaChartPlugin().configure({
           key: VizType.Area,
         }),
+        new EchartsAreaGradientChartPlugin().configure({
+          key: VizType.AreaGradient,
+        }),
         new EchartsTimeseriesChartPlugin().configure({
           key: VizType.Timeseries,
         }),
         new EchartsTimeseriesBarChartPlugin().configure({
           key: VizType.Bar,
+        }),
+        new EchartsTimeseriesBarAnimatedChartPlugin().configure({
+          key: VizType.BarAnimated,
         }),
         new EchartsTimeseriesLineChartPlugin().configure({
           key: VizType.Line,
@@ -164,6 +185,29 @@ export default class MainPreset extends Preset {
           key: VizType.Waterfall,
         }),
         new EchartsHeatmapChartPlugin().configure({ key: VizType.Heatmap }),
+        new EchartsPunchCardChartPlugin().configure({ key: VizType.PunchCard }),
+        new EchartsCustomChartPlugin().configure({
+          key: VizType.CustomEcharts,
+        }),
+        new EchartsBarRaceChartPlugin().configure({ key: VizType.BarRace }),
+        new EchartsNestedPieChartPlugin().configure({
+          key: VizType.NestedPie,
+        }),
+        new EchartsCandlestickChartPlugin().configure({
+          key: VizType.Candlestick,
+        }),
+        new EchartsGeoChoroplethChartPlugin().configure({
+          key: VizType.GeoChoropleth,
+        }),
+        new EchartsGeoScatterChartPlugin().configure({
+          key: VizType.GeoScatter,
+        }),
+        new EchartsGeoHeatmapChartPlugin().configure({
+          key: VizType.GeoHeatmap,
+        }),
+        new EchartsGeoLinesChartPlugin().configure({
+          key: VizType.GeoLines,
+        }),
         new EchartsHistogramChartPlugin().configure({ key: VizType.Histogram }),
         new SelectFilterPlugin().configure({ key: FilterPlugins.Select }),
         new RangeFilterPlugin().configure({ key: FilterPlugins.Range }),
