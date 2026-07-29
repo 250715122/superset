@@ -1,0 +1,119 @@
+{#
+  自定义注入（经 FLASK_APP_MUTATOR 的 custom_templates 目录覆盖内置空模板）。
+  修复：Superset 封装 Select 在启用"全选"时把下拉宽度硬编码为 168px
+  （superset-ui-core Select.tsx: popupMatchSelectWidth={selectAllEnabled ? 168 : true}），
+  导致角色编辑等弹窗里的权限下拉过窄。这里把弹窗内被写死 168px 的下拉
+  拉宽到与输入框同宽（弹窗内容区宽度减去左右 24px 内边距）。
+#}
+<style>
+  .ant-modal-content .ant-select-dropdown[style*="width: 168px"] {
+    width: auto !important;
+    min-width: calc(100% - 48px) !important;
+  }
+</style>
+
+{#
+  旧浏览器兼容：Superset 6 前端在看板 Tab 切换的 reducer 里直接调用了
+  ES2025 的原生 Set 方法（new Set(...).difference(...).union(...)，见产物
+  3397.*.entry.js），Chrome/Edge<122、Firefox<127、Safari<17 没有这些方法，
+  切 Tab 即报「意外错误 TypeError: (intermediate value).difference is not
+  a function」。这里补 7 个 Set 方法的 polyfill；已支持的浏览器原样跳过。
+#}
+<script>
+  (function () {
+    var p = Set.prototype;
+    function toSet(o) { return o instanceof Set ? o : new Set(o); }
+    if (!p.difference) p.difference = function (o) {
+      o = toSet(o); var r = new Set();
+      this.forEach(function (v) { if (!o.has(v)) r.add(v); });
+      return r;
+    };
+    if (!p.union) p.union = function (o) {
+      var r = new Set(this);
+      toSet(o).forEach(function (v) { r.add(v); });
+      return r;
+    };
+    if (!p.intersection) p.intersection = function (o) {
+      o = toSet(o); var r = new Set();
+      this.forEach(function (v) { if (o.has(v)) r.add(v); });
+      return r;
+    };
+    if (!p.symmetricDifference) p.symmetricDifference = function (o) {
+      o = toSet(o); var r = new Set();
+      this.forEach(function (v) { if (!o.has(v)) r.add(v); });
+      o.forEach(function (v) { if (!this.has(v)) r.add(v); }, this);
+      return r;
+    };
+    if (!p.isSubsetOf) p.isSubsetOf = function (o) {
+      o = toSet(o); var ok = true;
+      this.forEach(function (v) { if (!o.has(v)) ok = false; });
+      return ok;
+    };
+    if (!p.isSupersetOf) p.isSupersetOf = function (o) {
+      var self = this; var ok = true;
+      toSet(o).forEach(function (v) { if (!self.has(v)) ok = false; });
+      return ok;
+    };
+    if (!p.isDisjointFrom) p.isDisjointFrom = function (o) {
+      o = toSet(o); var ok = true;
+      this.forEach(function (v) { if (o.has(v)) ok = false; });
+      return ok;
+    };
+  })();
+</script>
+
+{#
+  在导航栏 Settings ▸ User 分组里补一个「修改密码」入口。
+  Superset 6 的用户下拉是前端硬编码的（只有 Info / Logout），后端补注册
+  ResetMyPasswordView 不会自动长出链接，所以这里克隆 Info 那一项、改 href。
+  克隆是为了直接继承 antd 的菜单项样式，不用手写 class。
+  注意：改的是 Superset 本地密码，SSO（Casdoor）账号的密码不受影响。
+#}
+<script>
+  (function () {
+    var HREF = '/resetmypassword/form';
+    var LABEL = '\u4fee\u6539\u5bc6\u7801';
+    var ANCHOR = 'a[href="/user_info/"]';
+    var busy = false;
+
+    function inject() {
+      if (busy) return;
+      var info = document.querySelector(ANCHOR);
+      if (!info) return;
+      var item = info.closest('li') || info.parentElement;
+      var list = item && item.parentElement;
+      if (!list || list.querySelector('a[href="' + HREF + '"]')) return;
+
+      busy = true;
+      try {
+        var clone = item.cloneNode(true);
+        // antd keys the original node; drop identifiers so it can't collide.
+        clone.removeAttribute('data-menu-id');
+        clone.removeAttribute('id');
+        var link = clone.matches('a') ? clone : clone.querySelector('a');
+        if (!link) return;
+        link.setAttribute('href', HREF);
+        link.textContent = LABEL;
+        item.insertAdjacentElement('afterend', clone);
+      } catch (e) {
+        /* never let this break the navbar */
+      } finally {
+        busy = false;
+      }
+    }
+
+    function start() {
+      inject();
+      new MutationObserver(inject).observe(document.body, {
+        childList: true,
+        subtree: true
+      });
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', start);
+    } else {
+      start();
+    }
+  })();
+</script>
