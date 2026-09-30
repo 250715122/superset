@@ -39,6 +39,7 @@ import {
   orderDescendingControlSetItem,
 } from './controls/orderBy';
 import { queryModeControlSetItem } from './controls/queryMode';
+import { isNotCommandDataset } from './controls/shared';
 import { styleControlSetItem } from './controls/style';
 
 const config: ControlPanelConfig = {
@@ -56,7 +57,14 @@ const config: ControlPanelConfig = {
         [rowLimitControlSetItem],
         [includeTimeControlSetItem],
         [showTotalsControlSetItem],
-        ['adhoc_filters'],
+        [
+          {
+            name: 'adhoc_filters',
+            override: {
+              visibility: isNotCommandDataset,
+            },
+          },
+        ],
       ],
     },
     {

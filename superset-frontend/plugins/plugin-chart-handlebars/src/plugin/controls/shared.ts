@@ -27,7 +27,30 @@ import {
   t,
 } from '@superset-ui/core';
 
-export function getQueryMode(controls: ControlStateMapping): QueryMode {
+type DatasourceLike = ControlPanelsContainerProps['datasource'];
+
+export function isCommandDataset(datasource?: DatasourceLike): boolean {
+  let extra = datasource?.extra ?? {};
+  if (typeof extra === 'string') {
+    try {
+      extra = JSON.parse(extra || '{}');
+    } catch {
+      extra = {};
+    }
+  }
+  const parsedExtra = extra as {
+    command_dataset?: { enabled?: boolean };
+  };
+  return Boolean(parsedExtra?.command_dataset?.enabled);
+}
+
+export function getQueryMode(
+  controls: ControlStateMapping,
+  datasource?: DatasourceLike,
+): QueryMode {
+  if (isCommandDataset(datasource)) {
+    return QueryMode.Raw;
+  }
   const mode = controls?.query_mode?.value;
   if (mode === QueryMode.Aggregate || mode === QueryMode.Raw) {
     return mode as QueryMode;
@@ -43,19 +66,26 @@ export function getQueryMode(controls: ControlStateMapping): QueryMode {
  * Visibility check
  */
 export function isQueryMode(mode: QueryMode) {
-  return ({ controls }: Pick<ControlPanelsContainerProps, 'controls'>) =>
-    getQueryMode(controls) === mode;
+  return ({ controls, datasource }: ControlPanelsContainerProps) =>
+    getQueryMode(controls || {}, datasource) === mode;
 }
 
 export const isAggMode = isQueryMode(QueryMode.Aggregate);
 export const isRawMode = isQueryMode(QueryMode.Raw);
+export const isNotCommandDataset = ({
+  datasource,
+}: ControlPanelsContainerProps) => !isCommandDataset(datasource);
 
 export const validateAggControlValues = (
   controls: ControlStateMapping,
   values: any[],
+  datasource?: DatasourceLike,
 ) => {
   const areControlsEmpty = values.every(val => ensureIsArray(val).length === 0);
-  return areControlsEmpty && isAggMode({ controls })
+  return (
+    areControlsEmpty &&
+    getQueryMode(controls, datasource) === QueryMode.Aggregate
+  )
     ? [t('Group By, Metrics or Percentage Metrics must have a value')]
     : [];
 };

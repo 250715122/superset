@@ -59,7 +59,30 @@ import { isEmpty, last } from 'lodash';
 import { PAGE_SIZE_OPTIONS, SERVER_PAGE_SIZE_OPTIONS } from './consts';
 import { ColorSchemeEnum } from './types';
 
-function getQueryMode(controls: ControlStateMapping): QueryMode {
+type DatasourceLike = ControlPanelsContainerProps['datasource'];
+
+function isCommandDataset(datasource?: DatasourceLike): boolean {
+  let extra = datasource?.extra ?? {};
+  if (typeof extra === 'string') {
+    try {
+      extra = JSON.parse(extra || '{}');
+    } catch {
+      extra = {};
+    }
+  }
+  const parsedExtra = extra as {
+    command_dataset?: { enabled?: boolean };
+  };
+  return Boolean(parsedExtra?.command_dataset?.enabled);
+}
+
+function getQueryMode(
+  controls: ControlStateMapping,
+  datasource?: DatasourceLike,
+): QueryMode {
+  if (isCommandDataset(datasource)) {
+    return QueryMode.Raw;
+  }
   const mode = controls?.query_mode?.value;
   if (mode === QueryMode.Aggregate || mode === QueryMode.Raw) {
     return mode as QueryMode;
@@ -75,19 +98,26 @@ function getQueryMode(controls: ControlStateMapping): QueryMode {
  * Visibility check
  */
 function isQueryMode(mode: QueryMode) {
-  return ({ controls }: Pick<ControlPanelsContainerProps, 'controls'>) =>
-    getQueryMode(controls) === mode;
+  return ({ controls, datasource }: ControlPanelsContainerProps) =>
+    getQueryMode(controls || {}, datasource) === mode;
 }
 
 const isAggMode = isQueryMode(QueryMode.Aggregate);
 const isRawMode = isQueryMode(QueryMode.Raw);
+const isNotCommandDataset = ({
+  datasource,
+}: ControlPanelsContainerProps) => !isCommandDataset(datasource);
 
 const validateAggControlValues = (
   controls: ControlStateMapping,
   values: any[],
+  datasource?: DatasourceLike,
 ) => {
   const areControlsEmpty = values.every(val => ensureIsArray(val).length === 0);
-  return areControlsEmpty && isAggMode({ controls })
+  return (
+    areControlsEmpty &&
+    getQueryMode(controls, datasource) === QueryMode.Aggregate
+  )
     ? [t('Group By, Metrics or Percentage Metrics must have a value')]
     : [];
 };
@@ -100,7 +130,10 @@ const queryMode: ControlConfig<'RadioButtonControl'> = {
     [QueryMode.Aggregate, QueryModeLabel[QueryMode.Aggregate]],
     [QueryMode.Raw, QueryModeLabel[QueryMode.Raw]],
   ],
-  mapStateToProps: ({ controls }) => ({ value: getQueryMode(controls) }),
+  mapStateToProps: ({ controls, datasource }) => ({
+    value: getQueryMode(controls, datasource as Dataset | undefined),
+  }),
+  visibility: isNotCommandDataset,
   rerender: ['all_columns', 'groupby', 'metrics', 'percent_metrics'],
 };
 
@@ -117,9 +150,10 @@ const allColumnsControl: typeof sharedControls.groupby = {
   valueKey: 'column_name',
   mapStateToProps: ({ datasource, controls }, controlState) => ({
     options: datasource?.columns || [],
-    queryMode: getQueryMode(controls),
+    queryMode: getQueryMode(controls, datasource as Dataset | undefined),
     externalValidationErrors:
-      isRawMode({ controls }) && ensureIsArray(controlState?.value).length === 0
+      getQueryMode(controls, datasource as Dataset | undefined) ===
+        QueryMode.Raw && ensureIsArray(controlState?.value).length === 0
         ? [t('must have a value')]
         : [],
   }),
@@ -142,12 +176,12 @@ const percentMetricsControl: typeof sharedControls.metrics = {
     savedMetrics: defineSavedMetrics(datasource),
     datasource,
     datasourceType: datasource?.type,
-    queryMode: getQueryMode(controls),
+    queryMode: getQueryMode(controls, datasource),
     externalValidationErrors: validateAggControlValues(controls, [
       controls.groupby?.value,
       controls.metrics?.value,
       controlState?.value,
-    ]),
+    ], datasource),
   }),
   rerender: ['groupby', 'metrics'],
   default: [],
@@ -257,6 +291,7 @@ const config: ControlPanelConfig = {
                     controls.percent_metrics?.value,
                     controlState.value,
                   ],
+                  state.datasource,
                 );
 
                 return newState;
@@ -270,7 +305,10 @@ const config: ControlPanelConfig = {
             name: 'time_grain_sqla',
             config: {
               ...sharedControls.time_grain_sqla,
-              visibility: ({ controls }) => {
+              visibility: ({ controls, datasource }) => {
+                if (isCommandDataset(datasource as Dataset | undefined)) {
+                  return false;
+                }
                 const dttmLookup = Object.fromEntries(
                   ensureIsArray(controls?.groupby?.options).map(option => [
                     (option.column_name || '').toLowerCase(),
@@ -320,7 +358,7 @@ const config: ControlPanelConfig = {
                   controls.groupby?.value,
                   controls.percent_metrics?.value,
                   controlState.value,
-                ]),
+                ], datasource),
               }),
               rerender: ['groupby', 'percent_metrics'],
             },
@@ -336,7 +374,14 @@ const config: ControlPanelConfig = {
             config: percentMetricsControl,
           },
         ],
-        ['adhoc_filters'],
+        [
+          {
+            name: 'adhoc_filters',
+            override: {
+              visibility: isNotCommandDataset,
+            },
+          },
+        ],
         [
           {
             name: 'timeseries_limit_metric',
@@ -358,7 +403,7 @@ const config: ControlPanelConfig = {
                   ? (datasource as Dataset)?.order_by_choices
                   : datasource?.columns || [],
               }),
-              visibility: isRawMode,
+              visibility: props => isNotCommandDataset(props) && isRawMode(props),
               resetOnHide: false,
             },
           },
@@ -377,7 +422,10 @@ const config: ControlPanelConfig = {
                 const hasSortMetric = Boolean(
                   controls?.timeseries_limit_metric?.value,
                 );
-                return hasSortMetric && isAggMode({ controls });
+                return (
+                  hasSortMetric &&
+                  getQueryMode(controls, undefined) === QueryMode.Aggregate
+                );
               },
               resetOnHide: false,
             },
@@ -393,6 +441,7 @@ const config: ControlPanelConfig = {
                 'Enable server side pagination of results (experimental feature)',
               ),
               default: false,
+              visibility: isNotCommandDataset,
             },
           },
         ],
@@ -406,7 +455,8 @@ const config: ControlPanelConfig = {
               default: 10,
               choices: SERVER_PAGE_SIZE_OPTIONS,
               description: t('Rows per page, 0 means no pagination'),
-              visibility: ({ controls }: ControlPanelsContainerProps) =>
+              visibility: ({ controls, datasource }: ControlPanelsContainerProps) =>
+                !isCommandDataset(datasource) &&
                 Boolean(controls?.server_pagination?.value),
               validators: [withLabel(validateInteger, t('Server Page Length'))],
             },
@@ -448,6 +498,7 @@ const config: ControlPanelConfig = {
               description: t(
                 'Limits the number of the rows that are computed in the query that is the source of the data used for this chart.',
               ),
+              visibility: isNotCommandDataset,
             },
           },
         ],

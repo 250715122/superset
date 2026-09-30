@@ -50,6 +50,23 @@ enum ColorSchemeType {
   SEQUENTIAL = 'SEQUENTIAL',
 }
 
+function getCommandDatasetConfig(dataset: ExplorePageInitialData['dataset']) {
+  let extra = dataset?.extra || {};
+  if (typeof extra === 'string') {
+    try {
+      extra = JSON.parse(extra || '{}');
+    } catch {
+      extra = {};
+    }
+  }
+  const parsedExtra = extra as {
+    command_dataset?: { enabled?: boolean };
+  };
+  return parsedExtra?.command_dataset?.enabled
+    ? parsedExtra.command_dataset
+    : null;
+}
+
 export const HYDRATE_EXPLORE = 'HYDRATE_EXPLORE';
 export const hydrateExplore =
   ({
@@ -98,6 +115,30 @@ export const hydrateExplore =
     }
 
     const initialDatasource = dataset;
+    const commandDatasetConfig = getCommandDatasetConfig(initialDatasource);
+    if (commandDatasetConfig) {
+      initialFormData.query_mode = 'raw';
+      initialFormData.metrics = [];
+      initialFormData.groupby = [];
+      initialFormData.percent_metrics = [];
+      initialFormData.adhoc_filters = [];
+      initialFormData.time_grain_sqla = undefined;
+      initialFormData.granularity_sqla = undefined;
+      initialFormData.timeseries_limit_metric = undefined;
+      initialFormData.order_by_cols = [];
+      initialFormData.server_pagination = false;
+      initialFormData.show_totals = false;
+      initialFormData.time_compare = [];
+      if (
+        (!Array.isArray(initialFormData.all_columns) ||
+          initialFormData.all_columns.length === 0) &&
+        Array.isArray(initialDatasource.columns)
+      ) {
+        initialFormData.all_columns = initialDatasource.columns.map(
+          column => column.column_name,
+        );
+      }
+    }
     initialDatasource.currency_formats = Object.fromEntries(
       (initialDatasource.metrics ?? [])
         .filter(metric => !!metric.currency)

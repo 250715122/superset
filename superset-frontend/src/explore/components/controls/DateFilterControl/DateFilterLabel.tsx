@@ -16,7 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-import { ReactNode, useState, useEffect, useMemo } from 'react';
+import { ReactNode, useState, useEffect, useMemo, useCallback } from 'react';
 import {
   css,
   styled,
@@ -25,7 +25,6 @@ import {
   NO_TIME_RANGE,
   SupersetTheme,
   useCSSTextTruncation,
-  fetchTimeRange,
 } from '@superset-ui/core';
 import {
   Button,
@@ -44,8 +43,11 @@ import { DateFilterControlProps, FrameType } from './types';
 import {
   DateFilterTestKey,
   FRAME_OPTIONS,
+  fetchTimeRangeDetails,
+  formatTimeRangeLimit,
   guessFrame,
   useDefaultTimeFilter,
+  validateTimeRangeLimit,
 } from './utils';
 import {
   CommonFrame,
@@ -145,6 +147,9 @@ export default function DateFilterLabel(props: DateFilterControlProps) {
     onOpenPopover = noOp,
     onClosePopover = noOp,
     isOverflowingFilterBar = false,
+    maxTimeRangeValue,
+    maxTimeRangeUnit,
+    validationMessage,
   } = props;
   const defaultTimeFilter = useDefaultTimeFilter();
 
@@ -159,79 +164,104 @@ export default function DateFilterLabel(props: DateFilterControlProps) {
   const [validTimeRange, setValidTimeRange] = useState<boolean>(false);
   const [evalResponse, setEvalResponse] = useState<string>(value);
   const [tooltipTitle, setTooltipTitle] = useState<ReactNode | null>(value);
+  const [rangeValidationMessage, setRangeValidationMessage] = useState('');
   const theme = useTheme();
   const [labelRef, labelIsTruncated] = useCSSTextTruncation<HTMLSpanElement>();
+  const maxTimeRangeLabel = useMemo(
+    () => formatTimeRangeLimit(maxTimeRangeValue, maxTimeRangeUnit),
+    [maxTimeRangeUnit, maxTimeRangeValue],
+  );
+
+  const validateRangeSelection = useCallback(
+    (since?: string, until?: string) => {
+      const result = validateTimeRangeLimit({
+        since,
+        until,
+        maxTimeRangeValue,
+        maxTimeRangeUnit,
+      });
+      setRangeValidationMessage(result.validationMessage);
+      return result.isValid;
+    },
+    [maxTimeRangeUnit, maxTimeRangeValue],
+  );
 
   useEffect(() => {
     if (value === NO_TIME_RANGE) {
       setActualTimeRange(NO_TIME_RANGE);
       setTooltipTitle(null);
-      setValidTimeRange(true);
+      setValidTimeRange(validateRangeSelection());
       return;
     }
-    fetchTimeRange(value).then(({ value: actualRange, error }) => {
-      if (error) {
-        setEvalResponse(error || '');
-        setValidTimeRange(false);
-        setTooltipTitle(value || null);
-      } else {
-        /*
-          HRT == human readable text
-          ADR == actual datetime range
-          +--------------+------+----------+--------+----------+-----------+
-          |              | Last | Previous | Custom | Advanced | No Filter |
-          +--------------+------+----------+--------+----------+-----------+
-          | control pill | HRT  | HRT      | ADR    | ADR      |   HRT     |
-          +--------------+------+----------+--------+----------+-----------+
-          | tooltip      | ADR  | ADR      | HRT    | HRT      |   ADR     |
-          +--------------+------+----------+--------+----------+-----------+
-        */
-        if (
-          guessedFrame === 'Common' ||
-          guessedFrame === 'Calendar' ||
-          guessedFrame === 'Current' ||
-          guessedFrame === 'No filter'
-        ) {
-          setActualTimeRange(value);
-          setTooltipTitle(
-            getTooltipTitle(labelIsTruncated, value, actualRange),
-          );
+    fetchTimeRangeDetails(value).then(
+      ({ value: actualRange, error, since, until }) => {
+        if (error) {
+          setEvalResponse(error || '');
+          setValidTimeRange(false);
+          setTooltipTitle(value || null);
+          setRangeValidationMessage('');
         } else {
-          setActualTimeRange(actualRange || '');
-          setTooltipTitle(
-            getTooltipTitle(labelIsTruncated, actualRange, value),
-          );
+          /*
+            HRT == human readable text
+            ADR == actual datetime range
+            +--------------+------+----------+--------+----------+-----------+
+            |              | Last | Previous | Custom | Advanced | No Filter |
+            +--------------+------+----------+--------+----------+-----------+
+            | control pill | HRT  | HRT      | ADR    | ADR      |   HRT     |
+            +--------------+------+----------+--------+----------+-----------+
+            | tooltip      | ADR  | ADR      | HRT    | HRT      |   ADR     |
+            +--------------+------+----------+--------+----------+-----------+
+          */
+          if (
+            guessedFrame === 'Common' ||
+            guessedFrame === 'Calendar' ||
+            guessedFrame === 'Current' ||
+            guessedFrame === 'No filter'
+          ) {
+            setActualTimeRange(value);
+            setTooltipTitle(
+              getTooltipTitle(labelIsTruncated, value, actualRange),
+            );
+          } else {
+            setActualTimeRange(actualRange || '');
+            setTooltipTitle(
+              getTooltipTitle(labelIsTruncated, actualRange, value),
+            );
+          }
+          setValidTimeRange(validateRangeSelection(since, until));
         }
-        setValidTimeRange(true);
-      }
-      setLastFetchedTimeRange(value);
-      setEvalResponse(actualRange || value);
-    });
-  }, [guessedFrame, labelIsTruncated, labelRef, value]);
+        setLastFetchedTimeRange(value);
+        setEvalResponse(actualRange || value);
+      },
+    );
+  }, [guessedFrame, labelIsTruncated, labelRef, validateRangeSelection, value]);
 
   useDebouncedEffect(
     () => {
       if (timeRangeValue === NO_TIME_RANGE) {
         setEvalResponse(NO_TIME_RANGE);
         setLastFetchedTimeRange(NO_TIME_RANGE);
-        setValidTimeRange(true);
+        setValidTimeRange(validateRangeSelection());
         return;
       }
       if (lastFetchedTimeRange !== timeRangeValue) {
-        fetchTimeRange(timeRangeValue).then(({ value: actualRange, error }) => {
-          if (error) {
-            setEvalResponse(error || '');
-            setValidTimeRange(false);
-          } else {
-            setEvalResponse(actualRange || '');
-            setValidTimeRange(true);
-          }
-          setLastFetchedTimeRange(timeRangeValue);
-        });
+        fetchTimeRangeDetails(timeRangeValue).then(
+          ({ value: actualRange, error, since, until }) => {
+            if (error) {
+              setEvalResponse(error || '');
+              setValidTimeRange(false);
+              setRangeValidationMessage('');
+            } else {
+              setEvalResponse(actualRange || '');
+              setValidTimeRange(validateRangeSelection(since, until));
+            }
+            setLastFetchedTimeRange(timeRangeValue);
+          },
+        );
       }
     },
     Constants.SLOW_DEBOUNCE,
-    [timeRangeValue],
+    [timeRangeValue, validateRangeSelection],
   );
 
   function onSave() {
@@ -317,6 +347,32 @@ export default function DateFilterLabel(props: DateFilterControlProps) {
           </IconWrapper>
         )}
       </div>
+      {maxTimeRangeLabel && (
+        <>
+          <Divider />
+          <div>
+            <div className="section-title">
+              {t('Maximum allowed time range')}
+            </div>
+            <div>{maxTimeRangeLabel}</div>
+            {rangeValidationMessage && (
+              <IconWrapper className="warning">
+                <Icons.ExclamationCircleOutlined iconColor={theme.colorError} />
+                <span className="text error">{rangeValidationMessage}</span>
+              </IconWrapper>
+            )}
+          </div>
+        </>
+      )}
+      {!maxTimeRangeLabel && validationMessage && (
+        <>
+          <Divider />
+          <IconWrapper className="warning">
+            <Icons.ExclamationCircleOutlined iconColor={theme.colorError} />
+            <span className="text error">{validationMessage}</span>
+          </IconWrapper>
+        </>
+      )}
       <Divider />
       <div className="footer">
         <Button

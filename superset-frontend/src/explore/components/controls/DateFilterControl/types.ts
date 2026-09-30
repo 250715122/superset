@@ -39,6 +39,8 @@ export type DateTimeGrainType =
   | 'quarter'
   | 'year';
 
+export type TimeRangeLimitUnit = 'day' | 'week' | 'month' | 'year';
+
 export type CustomRangeKey =
   | 'sinceMode'
   | 'sinceDatetime'
@@ -113,4 +115,8 @@ export interface DateFilterControlProps {
   onOpenPopover?: () => void;
   onClosePopover?: () => void;
   isOverflowingFilterBar?: boolean;
+  maxTimeRangeValue?: number | null;
+  maxTimeRangeUnit?: TimeRangeLimitUnit | null;
+  validationMessage?: string;
+  validateStatus?: 'error' | 'warning' | 'info';
 }

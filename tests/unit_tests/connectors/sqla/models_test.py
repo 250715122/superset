@@ -74,6 +74,138 @@ def test_query_bubbles_errors(mocker: MockerFixture) -> None:
         sqla_table.query(query_obj)
 
 
+def test_query_command_dataset_executes_raw_sql(mocker: MockerFixture) -> None:
+    database = mocker.MagicMock()
+    db_engine_spec = mocker.MagicMock()
+    db_engine_spec.get_command_dataset_sql.return_value = "SHOW FRONTENDS"
+    database.db_engine_spec = db_engine_spec
+    database.post_process_df.side_effect = lambda df: df
+    cursor = mocker.MagicMock()
+    cursor.description = (("Id", "BIGINT"), ("Name", "VARCHAR"))
+    database.get_raw_connection.return_value.__enter__.return_value.cursor.return_value = (
+        cursor
+    )
+    db_engine_spec.fetch_data.return_value = [(1, "fe1")]
+    mock_result_set = mocker.MagicMock()
+    mock_result_set.to_pandas_df.return_value = pd.DataFrame(
+        [{"Id": 1, "Name": "fe1"}]
+    )
+    mocker.patch(
+        "superset.connectors.sqla.models.SupersetResultSet",
+        return_value=mock_result_set,
+    )
+
+    sqla_table = SqlaTable(
+        table_name="show_frontends",
+        sql="SHOW FRONTENDS",
+        columns=[],
+        metrics=[],
+        database=database,
+    )
+    mocker.patch.object(sqla_table, "get_template_processor", return_value=mocker.Mock())
+    mocker.patch.object(sqla_table, "get_rendered_sql", return_value="SHOW FRONTENDS")
+
+    result = sqla_table.query(
+        {
+            "columns": ["Id"],
+            "metrics": [],
+            "filter": [],
+            "orderby": [],
+            "granularity": None,
+            "series_columns": [],
+            "series_limit": 0,
+            "series_limit_metric": None,
+            "is_rowcount": False,
+        }
+    )
+
+    db_engine_spec.execute.assert_called_once_with(cursor, "SHOW FRONTENDS", database)
+    assert list(result.df.columns) == ["Id"]
+    assert result.query == "SHOW FRONTENDS"
+
+
+def test_query_command_dataset_applies_orderby(mocker: MockerFixture) -> None:
+    database = mocker.MagicMock()
+    db_engine_spec = mocker.MagicMock()
+    db_engine_spec.get_command_dataset_sql.return_value = "SHOW FRONTENDS"
+    database.db_engine_spec = db_engine_spec
+    database.post_process_df.side_effect = lambda df: df
+    cursor = mocker.MagicMock()
+    cursor.description = (("Id", "BIGINT"), ("Name", "VARCHAR"))
+    database.get_raw_connection.return_value.__enter__.return_value.cursor.return_value = (
+        cursor
+    )
+    db_engine_spec.fetch_data.return_value = [(2, "fe2"), (1, "fe1")]
+    mock_result_set = mocker.MagicMock()
+    mock_result_set.to_pandas_df.return_value = pd.DataFrame(
+        [{"Id": 2, "Name": "fe2"}, {"Id": 1, "Name": "fe1"}]
+    )
+    mocker.patch(
+        "superset.connectors.sqla.models.SupersetResultSet",
+        return_value=mock_result_set,
+    )
+
+    sqla_table = SqlaTable(
+        table_name="show_frontends",
+        sql="SHOW FRONTENDS",
+        columns=[],
+        metrics=[],
+        database=database,
+    )
+    mocker.patch.object(sqla_table, "get_template_processor", return_value=mocker.Mock())
+    mocker.patch.object(sqla_table, "get_rendered_sql", return_value="SHOW FRONTENDS")
+
+    result = sqla_table.query(
+        {
+            "columns": ["Name"],
+            "metrics": [],
+            "filter": [],
+            "orderby": [["Id", True]],
+            "granularity": None,
+            "series_columns": [],
+            "series_limit": 0,
+            "series_limit_metric": None,
+            "is_rowcount": False,
+        }
+    )
+
+    assert result.df.to_dict("records") == [{"Name": "fe1"}, {"Name": "fe2"}]
+
+
+def test_fetch_metadata_skips_metrics_for_command_dataset(
+    mocker: MockerFixture,
+) -> None:
+    database = mocker.MagicMock()
+    database.db_engine_spec = mocker.MagicMock()
+    database.db_engine_spec.get_command_dataset_sql.return_value = "SHOW FRONTENDS"
+    database.db_engine_spec.alter_new_orm_column = mocker.MagicMock()
+
+    table = SqlaTable(
+        table_name="show_frontends",
+        sql="SHOW FRONTENDS",
+        database=database,
+        metrics=[
+            mocker.MagicMock(metric_name="stale_metric"),
+        ],
+    )
+    mocker.patch.object(table, "get_template_processor", return_value=mocker.Mock())
+    mocker.patch.object(table, "get_rendered_sql", return_value="SHOW FRONTENDS")
+    mocker.patch.object(
+        table,
+        "external_metadata",
+        return_value=[{"column_name": "Id", "type": "BIGINT"}],
+    )
+    mocker.patch("superset.connectors.sqla.models.db.session")
+    mocker.patch(
+        "superset.connectors.sqla.models.config", {"SQLA_TABLE_MUTATOR": lambda x: None}
+    )
+
+    table.fetch_metadata()
+
+    database.get_metrics.assert_not_called()
+    assert table.metrics == []
+
+
 def test_permissions_without_catalog() -> None:
     """
     Test permissions when the table has no catalog.

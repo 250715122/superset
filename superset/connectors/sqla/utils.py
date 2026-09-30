@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable, Iterator
 from functools import lru_cache
-from typing import Callable, TYPE_CHECKING, TypeVar
+from typing import Any, Callable, cast, TYPE_CHECKING, TypeVar
 from uuid import UUID
 
 from flask_babel import lazy_gettext as _
@@ -112,6 +112,13 @@ def get_virtual_table_metadata(dataset: SqlaTable) -> list[ResultSetColumnType]:
         raise SupersetGenericDBErrorException(
             message=_("Template processing error: %(error)s", error=str(ex)),
         ) from ex
+    if command_sql := db_engine_spec.get_command_dataset_sql(sql):
+        return get_command_columns_description(
+            dataset.database,
+            dataset.catalog,
+            dataset.schema,
+            command_sql,
+        )
     try:
         parsed_script = SQLScript(sql, engine=db_engine_spec.engine)
     except SupersetParseError as ex:
@@ -161,6 +168,27 @@ def get_columns_description(
             db_engine_spec.execute(cursor, mutated_query, database)
             result = db_engine_spec.fetch_data(cursor, limit=limit)
             result_set = SupersetResultSet(result, cursor.description, db_engine_spec)
+            return result_set.columns
+    except Exception as ex:
+        raise SupersetGenericDBErrorException(message=str(ex)) from ex
+
+
+def get_command_columns_description(
+    database: Database,
+    catalog: str | None,
+    schema: str | None,
+    query: str,
+) -> list[ResultSetColumnType]:
+    try:
+        with database.get_raw_connection(catalog=catalog, schema=schema) as conn:
+            cursor = conn.cursor()
+            database.db_engine_spec.execute(cursor, query, database)
+            result = database.db_engine_spec.fetch_data(cursor)
+            result_set = SupersetResultSet(
+                result,
+                cast(Any, cursor.description),
+                database.db_engine_spec,
+            )
             return result_set.columns
     except Exception as ex:
         raise SupersetGenericDBErrorException(message=str(ex)) from ex

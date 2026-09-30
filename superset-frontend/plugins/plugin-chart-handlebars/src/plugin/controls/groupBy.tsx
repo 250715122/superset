@@ -37,7 +37,7 @@ export const groupByControlSetItem: ControlSetItem = {
         controls.metrics?.value,
         controls.percent_metrics?.value,
         controlState.value,
-      ]);
+      ], state.datasource);
       return newState;
     },
     rerender: ['metrics', 'percent_metrics'],

@@ -20,11 +20,21 @@ import {
   styled,
   NO_TIME_RANGE,
   getExtensionsRegistry,
+  t,
 } from '@superset-ui/core';
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
+import {
+  FormItem,
+  type FormItemProps,
+} from '@superset-ui/core/components';
 import DateFilterControl from 'src/explore/components/controls/DateFilterControl';
+import {
+  fetchTimeRangeDetails,
+  formatTimeRangeLimit,
+  validateTimeRangeLimit,
+} from 'src/explore/components/controls/DateFilterControl/utils';
 import { PluginFilterTimeProps } from './types';
-import { FilterPluginStyle } from '../common';
+import { FilterPluginStyle, StatusMessage } from '../common';
 
 const TimeFilterStyles = styled(FilterPluginStyle)`
   display: flex;
@@ -84,7 +94,12 @@ export default function TimeFilterPlugin(props: PluginFilterTimeProps) {
     inputRef,
     isOverflowingFilterBar = false,
   } = props;
+  const { maxTimeRangeUnit, maxTimeRangeValue } = props.formData;
   const extensionsRegistry = getExtensionsRegistry();
+  const maxTimeRangeLabel = useMemo(
+    () => formatTimeRangeLimit(maxTimeRangeValue, maxTimeRangeUnit),
+    [maxTimeRangeUnit, maxTimeRangeValue],
+  );
 
   const DateFilterControlExtension = extensionsRegistry.get(
     'filter.dateFilterControl',
@@ -92,8 +107,59 @@ export default function TimeFilterPlugin(props: PluginFilterTimeProps) {
   const DateFilterComponent = DateFilterControlExtension ?? DateFilterControl;
 
   const handleTimeRangeChange = useCallback(
-    (timeRange?: string): void => {
+    async (timeRange?: string): Promise<void> => {
       const isSet = timeRange && timeRange !== NO_TIME_RANGE;
+      const validationMessage = maxTimeRangeLabel
+        ? t('Select a bounded time range no longer than %(max_range)s.', {
+            max_range: maxTimeRangeLabel,
+          })
+        : '';
+
+      if (maxTimeRangeLabel) {
+        if (!isSet) {
+          setDataMask({
+            extraFormData: {},
+            filterState: {
+              value: timeRange || NO_TIME_RANGE,
+              validateStatus: 'error',
+              validateMessage: validationMessage,
+            },
+          });
+          return;
+        }
+
+        const { error, since, until } = await fetchTimeRangeDetails(timeRange);
+        if (error) {
+          setDataMask({
+            extraFormData: {},
+            filterState: {
+              value: timeRange,
+              validateStatus: 'error',
+              validateMessage: error,
+            },
+          });
+          return;
+        }
+
+        const validationResult = validateTimeRangeLimit({
+          since,
+          until,
+          maxTimeRangeValue,
+          maxTimeRangeUnit,
+        });
+        if (!validationResult.isValid) {
+          setDataMask({
+            extraFormData: {},
+            filterState: {
+              value: timeRange,
+              validateStatus: 'error',
+              validateMessage: validationResult.validationMessage,
+            },
+          });
+          return;
+        }
+      }
+
       setDataMask({
         extraFormData: isSet
           ? {
@@ -102,40 +168,64 @@ export default function TimeFilterPlugin(props: PluginFilterTimeProps) {
           : {},
         filterState: {
           value: isSet ? timeRange : undefined,
+          validateStatus: undefined,
+          validateMessage: '',
         },
       });
     },
-    [setDataMask],
+    [
+      maxTimeRangeLabel,
+      maxTimeRangeUnit,
+      maxTimeRangeValue,
+      setDataMask,
+    ],
   );
 
   useEffect(() => {
-    handleTimeRangeChange(filterState.value);
-  }, [filterState.value]);
+    void handleTimeRangeChange(filterState.value);
+  }, [filterState.value, handleTimeRangeChange]);
+
+  const formItemData: FormItemProps = {};
+  if (filterState.validateMessage) {
+    formItemData.extra = (
+      <StatusMessage status={filterState.validateStatus}>
+        {filterState.validateMessage}
+      </StatusMessage>
+    );
+  }
 
   return props.formData?.inView ? (
     <TimeFilterStyles width={width} height={height}>
-      <ControlContainer
-        ref={inputRef}
-        validateStatus={filterState.validateStatus}
-        onFocus={setFocusedFilter}
-        onBlur={unsetFocusedFilter}
-        onMouseEnter={setHoveredFilter}
-        onMouseLeave={unsetHoveredFilter}
-        tabIndex={-1}
-      >
-        <DateFilterComponent
-          value={filterState.value || NO_TIME_RANGE}
-          name={props.formData.nativeFilterId || 'time_range'}
-          onChange={handleTimeRangeChange}
-          onOpenPopover={() => setFilterActive(true)}
-          onClosePopover={() => {
-            setFilterActive(false);
-            unsetHoveredFilter();
-            unsetFocusedFilter();
-          }}
-          isOverflowingFilterBar={isOverflowingFilterBar}
-        />
-      </ControlContainer>
+      <FormItem validateStatus={filterState.validateStatus} {...formItemData}>
+        <ControlContainer
+          ref={inputRef}
+          validateStatus={filterState.validateStatus}
+          onFocus={setFocusedFilter}
+          onBlur={unsetFocusedFilter}
+          onMouseEnter={setHoveredFilter}
+          onMouseLeave={unsetHoveredFilter}
+          tabIndex={-1}
+        >
+          <DateFilterComponent
+            value={filterState.value || NO_TIME_RANGE}
+            name={props.formData.nativeFilterId || 'time_range'}
+            onChange={timeRange => {
+              void handleTimeRangeChange(timeRange);
+            }}
+            onOpenPopover={() => setFilterActive(true)}
+            onClosePopover={() => {
+              setFilterActive(false);
+              unsetHoveredFilter();
+              unsetFocusedFilter();
+            }}
+            isOverflowingFilterBar={isOverflowingFilterBar}
+            maxTimeRangeValue={maxTimeRangeValue}
+            maxTimeRangeUnit={maxTimeRangeUnit}
+            validationMessage={filterState.validateMessage}
+            validateStatus={filterState.validateStatus}
+          />
+        </ControlContainer>
+      </FormItem>
     </TimeFilterStyles>
   ) : null;
 }

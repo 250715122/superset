@@ -31,6 +31,7 @@ import {
   CurrentYear,
   CurrentQuarter,
   CurrentDay,
+  TimeRangeLimitUnit,
 } from 'src/explore/components/controls/DateFilterControl/types';
 import { CheckboxOptionType } from '@superset-ui/core/components/Radio';
 import { extendedDayjs } from '@superset-ui/core/utils/dates';
@@ -110,6 +111,19 @@ export const SINCE_MODE_OPTIONS: SelectOptionType[] = [
 
 export const UNTIL_MODE_OPTIONS: SelectOptionType[] =
   SINCE_MODE_OPTIONS.slice();
+
+export const TIME_RANGE_LIMIT_UNIT_OPTIONS: SelectOptionType[] = [
+  { value: 'day', label: t('Days') },
+  { value: 'week', label: t('Weeks') },
+  { value: 'month', label: t('Months') },
+  { value: 'year', label: t('Years') },
+];
+
+export const TIME_RANGE_LIMIT_UNITS_SET: Set<TimeRangeLimitUnit> = new Set(
+  TIME_RANGE_LIMIT_UNIT_OPTIONS.map(
+    option => option.value as TimeRangeLimitUnit,
+  ),
+);
 
 export const COMMON_RANGE_SET: Set<CommonRangeType> = new Set([
   'Last day',

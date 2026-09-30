@@ -23,7 +23,7 @@ import {
   Dataset,
   ColumnMeta,
 } from '@superset-ui/chart-controls';
-import { ensureIsArray, t } from '@superset-ui/core';
+import { ensureIsArray, QueryMode, t } from '@superset-ui/core';
 import { getQueryMode, isRawMode } from './shared';
 
 const dndAllColumns: typeof sharedControls.groupby = {
@@ -40,9 +40,10 @@ const dndAllColumns: typeof sharedControls.groupby = {
         );
       } else newState.options = datasource.columns;
     }
-    newState.queryMode = getQueryMode(controls);
+    newState.queryMode = getQueryMode(controls, datasource);
     newState.externalValidationErrors =
-      isRawMode({ controls }) && ensureIsArray(controlState?.value).length === 0
+      getQueryMode(controls, datasource) === QueryMode.Raw &&
+      ensureIsArray(controlState?.value).length === 0
         ? [t('must have a value')]
         : [];
     return newState;

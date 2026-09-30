@@ -17,9 +17,9 @@
  * under the License.
  */
 import { ControlSetItem, Dataset } from '@superset-ui/chart-controls';
-import { t } from '@superset-ui/core';
+import { QueryMode, t } from '@superset-ui/core';
 import { isEmpty } from 'lodash';
-import { isAggMode, isRawMode } from './shared';
+import { getQueryMode, isNotCommandDataset, isRawMode } from './shared';
 
 export const orderByControlSetItem: ControlSetItem = {
   name: 'order_by_cols',
@@ -34,7 +34,7 @@ export const orderByControlSetItem: ControlSetItem = {
         ? (datasource as Dataset)?.order_by_choices
         : datasource?.columns || [],
     }),
-    visibility: isRawMode,
+    visibility: props => isNotCommandDataset(props) && isRawMode(props),
     resetOnHide: false,
   },
 };
@@ -46,9 +46,9 @@ export const orderDescendingControlSetItem: ControlSetItem = {
     label: t('Sort descending'),
     default: true,
     description: t('Whether to sort descending or ascending'),
-    visibility: ({ controls }) =>
+    visibility: ({ controls, datasource }) =>
       !!(
-        isAggMode({ controls }) &&
+        getQueryMode(controls, datasource) === QueryMode.Aggregate &&
         controls?.timeseries_limit_metric.value &&
         !isEmpty(controls?.timeseries_limit_metric.value)
       ),

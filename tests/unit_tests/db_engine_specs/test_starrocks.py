@@ -173,3 +173,26 @@ def test_impersonation_disabled(mocker: MockerFixture) -> None:
     ) == (make_url("starrocks://service_user@localhost:9030/hive.default"), {})
 
     assert StarRocksEngineSpec.get_prequeries(database) == []
+
+
+@pytest.mark.parametrize(
+    "sql,expected",
+    [
+        ("SHOW FRONTENDS", "SHOW FRONTENDS"),
+        (" show backends ; ", "show backends"),
+        ("SHOW COMPUTE NODES", "SHOW COMPUTE NODES"),
+        ("SHOW CATALOGS", "SHOW CATALOGS"),
+        ("SHOW RESOURCE GROUPS ALL", "SHOW RESOURCE GROUPS ALL"),
+        ("ADMIN SHOW FRONTEND CONFIG", "ADMIN SHOW FRONTEND CONFIG"),
+        ("SHOW PROC '/frontends'", "SHOW PROC '/frontends'"),
+        ("SHOW PROC '/dbs/10001/12345'", "SHOW PROC '/dbs/10001/12345'"),
+        ("SHOW GRANTS FOR 'test'@'%'", "SHOW GRANTS FOR 'test'@'%'"),
+        ("SHOW FRONTENDS; DROP TABLE foo", None),
+        ("SHOW FRONTENDS -- comment", None),
+        ("SELECT * FROM foo", None),
+    ],
+)
+def test_get_command_dataset_sql(sql: str, expected: str | None) -> None:
+    from superset.db_engine_specs.starrocks import StarRocksEngineSpec
+
+    assert StarRocksEngineSpec.get_command_dataset_sql(sql) == expected

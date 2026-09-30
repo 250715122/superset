@@ -20,13 +20,13 @@ import {
   ControlPanelsContainerProps,
   ControlSetItem,
 } from '@superset-ui/chart-controls';
-import { isAggMode } from './shared';
+import { isAggMode, isCommandDataset } from './shared';
 
 export const rowLimitControlSetItem: ControlSetItem = {
   name: 'row_limit',
   override: {
-    visibility: ({ controls }: ControlPanelsContainerProps) =>
-      !controls?.server_pagination?.value,
+    visibility: ({ controls, datasource }: ControlPanelsContainerProps) =>
+      !isCommandDataset(datasource) && !controls?.server_pagination?.value,
   },
 };
 

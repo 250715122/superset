@@ -39,6 +39,12 @@ CONNECTION_UNKNOWN_DATABASE_REGEX = re.compile("Unknown database '(?P<database>.
 
 logger = logging.getLogger(__name__)
 
+COMMAND_DATASET_SQL_PATTERN = re.compile(
+    r"^\s*(?:ADMIN\s+)?SHOW\b[\s\S]*$",
+    re.IGNORECASE,
+)
+COMMAND_DATASET_SQL_DISALLOWED_TOKENS = (";", "--", "/*", "*/", "#")
+
 
 class TINYINT(Integer):
     __visit_name__ = "TINYINT"
@@ -162,6 +168,20 @@ class StarRocksEngineSpec(MySQLEngineSpec):
             {"invalid": ["database"]},
         ),
     }
+
+    @classmethod
+    def get_command_dataset_sql(cls, sql: str) -> str | None:
+        normalized_sql = sql.strip().rstrip(";").strip()
+        if (
+            normalized_sql
+            and COMMAND_DATASET_SQL_PATTERN.match(normalized_sql)
+            and not any(
+                token in normalized_sql
+                for token in COMMAND_DATASET_SQL_DISALLOWED_TOKENS
+            )
+        ):
+            return normalized_sql
+        return None
 
     @classmethod
     def adjust_engine_params(

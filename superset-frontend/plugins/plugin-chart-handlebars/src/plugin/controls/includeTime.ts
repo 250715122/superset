@@ -18,7 +18,7 @@
  */
 import { ControlSetItem } from '@superset-ui/chart-controls';
 import { t } from '@superset-ui/core';
-import { isAggMode } from './shared';
+import { isAggMode, isNotCommandDataset } from './shared';
 
 export const includeTimeControlSetItem: ControlSetItem = {
   name: 'include_time',
@@ -29,7 +29,7 @@ export const includeTimeControlSetItem: ControlSetItem = {
       'Whether to include the time granularity as defined in the time section',
     ),
     default: false,
-    visibility: isAggMode,
+    visibility: props => isNotCommandDataset(props) && isAggMode(props),
     resetOnHide: false,
   },
 };

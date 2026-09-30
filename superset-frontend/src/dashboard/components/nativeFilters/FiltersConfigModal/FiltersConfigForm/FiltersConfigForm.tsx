@@ -67,6 +67,7 @@ import {
   Input,
   Loading,
 } from '@superset-ui/core/components';
+import { InputNumber } from '@superset-ui/core/components/Input';
 import { BasicErrorAlert, ErrorMessageWithStackTrace } from 'src/components';
 import { addDangerToast } from 'src/components/MessageToasts/actions';
 import { Radio } from '@superset-ui/core/components/Radio';
@@ -79,6 +80,11 @@ import {
   RootState,
 } from 'src/dashboard/types';
 import DateFilterControl from 'src/explore/components/controls/DateFilterControl';
+import {
+  TIME_RANGE_LIMIT_UNIT_OPTIONS,
+  formatTimeRangeLimit,
+} from 'src/explore/components/controls/DateFilterControl/utils';
+import { TimeRangeLimitUnit } from 'src/explore/components/controls/DateFilterControl/types';
 import AdhocFilterControl from 'src/explore/components/controls/FilterControl/AdhocFilterControl';
 import { waitForAsyncData } from 'src/middleware/asyncEvent';
 import { SingleValueType } from 'src/filters/components/Range/SingleValueType';
@@ -528,6 +534,23 @@ const FiltersConfigForm = (
     sort = formFilter.controlValues.sortAscending;
   }
 
+  const rawMaxTimeRangeValue =
+    formFilter?.controlValues?.maxTimeRangeValue ??
+    filterToEdit?.controlValues?.maxTimeRangeValue;
+  const maxTimeRangeValue =
+    typeof rawMaxTimeRangeValue === 'number' && rawMaxTimeRangeValue > 0
+      ? rawMaxTimeRangeValue
+      : undefined;
+  const maxTimeRangeUnit =
+    (formFilter?.controlValues?.maxTimeRangeUnit ??
+      filterToEdit?.controlValues?.maxTimeRangeUnit) ||
+    'day';
+  const hasMaxTimeRange = !!maxTimeRangeValue;
+  const maxTimeRangeLabel = formatTimeRangeLimit(
+    maxTimeRangeValue,
+    maxTimeRangeUnit as TimeRangeLimitUnit,
+  );
+
   const showDefaultValue =
     !hasDataset ||
     (!isDataDirty && hasFilledDataset) ||
@@ -550,6 +573,22 @@ const FiltersConfigForm = (
       controlValues: {
         ...previous,
         enableSingleValue: value,
+      },
+    });
+    forceUpdate();
+  };
+
+  const onMaxTimeRangeChanged = (
+    values: Partial<{
+      maxTimeRangeValue?: number;
+      maxTimeRangeUnit?: TimeRangeLimitUnit;
+    }>,
+  ) => {
+    const previous = form.getFieldValue('filters')?.[filterId].controlValues;
+    setNativeFilterFieldValues(form, filterId, {
+      controlValues: {
+        ...previous,
+        ...values,
       },
     });
     forceUpdate();
@@ -1340,6 +1379,103 @@ const FiltersConfigForm = (
                             hidden
                             initialValue={null}
                           />
+                          {formFilter?.filterType === 'filter_time' && (
+                            <FormItem
+                              name={['filters', filterId, 'timeFilterLimit']}
+                            >
+                              <CollapsibleControl
+                                initialValue={hasMaxTimeRange}
+                                title={t('Limit selectable time range')}
+                                tooltip={t(
+                                  'Prevent this dashboard time filter from querying overly large time windows.',
+                                )}
+                                onChange={checked => {
+                                  if (checked) {
+                                    onMaxTimeRangeChanged({
+                                      maxTimeRangeValue: maxTimeRangeValue ?? 7,
+                                      maxTimeRangeUnit:
+                                        (maxTimeRangeUnit as TimeRangeLimitUnit) ??
+                                        'day',
+                                    });
+                                  } else {
+                                    onMaxTimeRangeChanged({
+                                      maxTimeRangeValue: undefined,
+                                      maxTimeRangeUnit: undefined,
+                                    });
+                                  }
+                                  formChanged();
+                                }}
+                              >
+                                <StyledRowContainer justify="space-between">
+                                  <StyledRowFormItem
+                                    expanded={expanded}
+                                    name={[
+                                      'filters',
+                                      filterId,
+                                      'controlValues',
+                                      'maxTimeRangeValue',
+                                    ]}
+                                    initialValue={maxTimeRangeValue}
+                                    label={
+                                      <StyledLabel>
+                                        {t('Maximum range')}
+                                      </StyledLabel>
+                                    }
+                                  >
+                                    <InputNumber
+                                      min={1}
+                                      precision={0}
+                                      style={{ width: '100%' }}
+                                      onChange={value => {
+                                        onMaxTimeRangeChanged({
+                                          maxTimeRangeValue:
+                                            typeof value === 'number'
+                                              ? value
+                                              : undefined,
+                                        });
+                                        formChanged();
+                                      }}
+                                    />
+                                  </StyledRowFormItem>
+                                  <StyledRowFormItem
+                                    expanded={expanded}
+                                    name={[
+                                      'filters',
+                                      filterId,
+                                      'controlValues',
+                                      'maxTimeRangeUnit',
+                                    ]}
+                                    initialValue={maxTimeRangeUnit}
+                                    label={
+                                      <StyledLabel>
+                                        {t('Maximum range unit')}
+                                      </StyledLabel>
+                                    }
+                                  >
+                                    <Select
+                                      ariaLabel={t('Maximum range unit')}
+                                      options={TIME_RANGE_LIMIT_UNIT_OPTIONS}
+                                      onChange={value => {
+                                        onMaxTimeRangeChanged({
+                                          maxTimeRangeUnit:
+                                            value as TimeRangeLimitUnit,
+                                        });
+                                        formChanged();
+                                      }}
+                                    />
+                                  </StyledRowFormItem>
+                                </StyledRowContainer>
+                                {maxTimeRangeLabel && (
+                                  <FilterTypeInfo expanded={expanded}>
+                                    {t(
+                                      'This filter will only allow time ranges up to %(max_range)s.',
+                                      { max_range: maxTimeRangeLabel },
+                                    )}
+                                  </FilterTypeInfo>
+                                )}
+                              </CollapsibleControl>
+                            </FormItem>
+                          )}
                           <FormItem
                             name={['filters', filterId, 'defaultValue']}
                           >

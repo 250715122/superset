@@ -17,7 +17,11 @@
  * under the License.
  */
 
-import { customTimeRangeEncode } from 'src/explore/components/controls/DateFilterControl/utils';
+import {
+  customTimeRangeEncode,
+  formatTimeRangeLimit,
+  validateTimeRangeLimit,
+} from 'src/explore/components/controls/DateFilterControl/utils';
 
 describe('Custom TimeRange', () => {
   describe('customTimeRangeEncode', () => {
@@ -180,6 +184,55 @@ describe('Custom TimeRange', () => {
       ).toEqual(
         'DATEADD(DATETIME("2021-01-27T00:00:00"), -7, day) : DATEADD(DATETIME("2021-01-27T00:00:00"), 7, day)',
       );
+    });
+  });
+});
+
+describe('Time range limits', () => {
+  it('formats the configured limit label', () => {
+    expect(formatTimeRangeLimit(7, 'day')).toEqual('7 days');
+    expect(formatTimeRangeLimit(1, 'month')).toEqual('1 month');
+    expect(formatTimeRangeLimit(undefined, 'day')).toBeNull();
+  });
+
+  it('accepts bounded ranges within the configured limit', () => {
+    expect(
+      validateTimeRangeLimit({
+        since: '2026-09-01T00:00:00',
+        until: '2026-09-08T00:00:00',
+        maxTimeRangeValue: 7,
+        maxTimeRangeUnit: 'day',
+      }),
+    ).toEqual({ isValid: true, validationMessage: '' });
+  });
+
+  it('rejects unbounded ranges when a limit is configured', () => {
+    expect(
+      validateTimeRangeLimit({
+        since: undefined,
+        until: '2026-09-08T00:00:00',
+        maxTimeRangeValue: 7,
+        maxTimeRangeUnit: 'day',
+      }),
+    ).toEqual({
+      isValid: false,
+      validationMessage:
+        'Select a bounded time range no longer than 7 days.',
+    });
+  });
+
+  it('rejects ranges that exceed the configured limit', () => {
+    expect(
+      validateTimeRangeLimit({
+        since: '2026-09-01T00:00:00',
+        until: '2026-09-09T00:00:01',
+        maxTimeRangeValue: 7,
+        maxTimeRangeUnit: 'day',
+      }),
+    ).toEqual({
+      isValid: false,
+      validationMessage:
+        'Select a bounded time range no longer than 7 days.',
     });
   });
 });

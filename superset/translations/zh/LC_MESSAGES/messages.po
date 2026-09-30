@@ -14620,7 +14620,166 @@ msgstr ""
 msgid "y: values are normalized within each row"
 msgstr ""
 
+msgid "Actual time range"
+msgstr "实际时间范围"
+
+msgid "Advanced"
+msgstr "高级"
+
+msgid "After"
+msgstr "之后"
+
+msgid "Before"
+msgstr "之前"
+
+msgid "Configure Advanced Time Range "
+msgstr "配置高级时间范围"
+
+msgid "Configure Time Range: Current..."
+msgstr "配置时间范围：当前..."
+
+msgid "Configure Time Range: Last..."
+msgstr "配置时间范围：最近..."
+
+msgid "Configure Time Range: Previous..."
+msgstr "配置时间范围：上一..."
+
+msgid "Configure custom time range"
+msgstr "配置自定义时间范围"
+
+msgid "Current"
+msgstr "当前"
+
+msgid "Current day"
+msgstr "当天"
+
+msgid "Current month"
+msgstr "本月"
+
+msgid "Current quarter"
+msgstr "本季度"
+
+msgid "Current week"
+msgstr "本周"
+
+msgid "Current year"
+msgstr "本年"
+
+msgid "Custom"
+msgstr "自定义"
+
+msgid "day"
+msgstr "天"
+
+msgid "days"
+msgstr "天"
+
+msgid "Days"
+msgstr "天"
+
+msgid "Edit time range"
+msgstr "编辑时间范围"
+
+msgid "Last"
+msgstr "最近"
+
+msgid "Last day"
+msgstr "最近一天"
+
+msgid "Last month"
+msgstr "最近一月"
+
+msgid "Last quarter"
+msgstr "最近一季度"
+
+msgid "Last week"
+msgstr "最近一周"
+
+msgid "Last year"
+msgstr "最近一年"
+
+msgid "Limit selectable time range"
+msgstr "限制可选时间范围"
+
+msgid "Maximum allowed time range"
+msgstr "最大允许时间范围"
+
+msgid "Maximum range"
+msgstr "最大范围值"
+
+msgid "Maximum range unit"
+msgstr "最大范围单位"
+
+msgid "Midnight"
+msgstr "今日零点"
+
+msgid "month"
+msgstr "月"
+
+msgid "months"
+msgstr "月"
+
+msgid "Months"
+msgstr "月"
+
+msgid "No filter"
+msgstr "不筛选"
+
+msgid "Now"
+msgstr "当前时刻"
+
+msgid "Prevent this dashboard time filter from querying overly large time windows."
+msgstr "限制此时间筛选器可选择的最大时间窗口，避免发起过大的查询。"
+
+msgid "Previous"
+msgstr "上一"
+
+msgid "previous calendar month"
+msgstr "上一个自然月"
+
+msgid "previous calendar quarter"
+msgstr "上一个自然季度"
+
+msgid "previous calendar week"
+msgstr "上一个自然周"
+
+msgid "previous calendar year"
+msgstr "上一个自然年"
+
+msgid "Range type"
+msgstr "范围类型"
+
+msgid "Relative Date/Time"
+msgstr "相对日期/时间"
+
+msgid "Select a bounded time range no longer than %(max_range)s."
+msgstr "请选择一个有明确起止且不超过%(max_range)s的时间范围。"
+
+msgid "Specific Date/Time"
+msgstr "指定日期/时间"
+
+msgid "This filter will only allow time ranges up to %(max_range)s."
+msgstr "此筛选器只允许选择不超过%(max_range)s的时间范围。"
+
+msgid "Time range"
+msgstr "时间范围"
+
+msgid "week"
+msgstr "周"
+
+msgid "weeks"
+msgstr "周"
+
+msgid "Weeks"
+msgstr "周"
+
 msgid "year"
+msgstr "年"
+
+msgid "years"
+msgstr "年"
+
+msgid "Years"
 msgstr "年"
 
 msgid "zoom area"

@@ -675,6 +675,16 @@ class BaseEngineSpec:  # pylint: disable=too-many-public-methods
         return driver in cls.drivers
 
     @classmethod
+    def get_command_dataset_sql(cls, sql: str) -> str | None:
+        """
+        Return a normalized command-style dataset statement if supported.
+
+        Command datasets are virtual datasets backed by read-only statements that
+        return tabular results, but cannot be wrapped in a subquery.
+        """
+        return None
+
+    @classmethod
     def get_default_catalog(
         cls,
         database: Database,  # pylint: disable=unused-argument

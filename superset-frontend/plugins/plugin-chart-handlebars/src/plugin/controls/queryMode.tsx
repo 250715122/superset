@@ -22,7 +22,7 @@ import {
   QueryModeLabel,
 } from '@superset-ui/chart-controls';
 import { QueryMode, t } from '@superset-ui/core';
-import { getQueryMode } from './shared';
+import { getQueryMode, isNotCommandDataset } from './shared';
 
 const queryMode: ControlConfig<'RadioButtonControl'> = {
   type: 'RadioButtonControl',
@@ -32,7 +32,10 @@ const queryMode: ControlConfig<'RadioButtonControl'> = {
     [QueryMode.Aggregate, QueryModeLabel[QueryMode.Aggregate]],
     [QueryMode.Raw, QueryModeLabel[QueryMode.Raw]],
   ],
-  mapStateToProps: ({ controls }) => ({ value: getQueryMode(controls) }),
+  mapStateToProps: ({ controls, datasource }) => ({
+    value: getQueryMode(controls, datasource),
+  }),
+  visibility: isNotCommandDataset,
   rerender: ['all_columns', 'groupby', 'metrics', 'percent_metrics'],
 };
 

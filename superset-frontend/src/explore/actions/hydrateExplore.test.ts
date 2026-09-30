@@ -261,3 +261,49 @@ test('extracts currency formats from metrics in dataset', () => {
     }),
   );
 });
+
+test('hydrates command datasets in raw table mode', () => {
+  const dispatch = jest.fn();
+  const getState = jest.fn(() => ({
+    user: {},
+    charts: {},
+    datasources: {},
+    common: {},
+    explore: {},
+  }));
+
+  const commandDataset = {
+    ...exploreInitialData.dataset,
+    columns: [{ column_name: 'Id' }, { column_name: 'Name' }],
+    metrics: [{ metric_name: 'stale_metric' }],
+    extra: {
+      command_dataset: {
+        enabled: true,
+      },
+    },
+  } as any;
+
+  hydrateExplore({
+    ...exploreInitialData,
+    dataset: commandDataset,
+    form_data: { datasource: '8__table', viz_type: VizType.Table },
+  })(dispatch, getState as any);
+
+  expect(dispatch).toHaveBeenCalledWith(
+    expect.objectContaining({
+      data: expect.objectContaining({
+        explore: expect.objectContaining({
+          form_data: expect.objectContaining({
+            query_mode: 'raw',
+            all_columns: ['Id', 'Name'],
+            metrics: [],
+            groupby: [],
+            percent_metrics: [],
+            adhoc_filters: [],
+            server_pagination: false,
+          }),
+        }),
+      }),
+    }),
+  );
+});

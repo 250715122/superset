@@ -113,6 +113,23 @@ def test_get_virtual_table_metadata(mocker: MockerFixture) -> None:
     assert get_virtual_table_metadata(dataset) == [{"name": "one", "type": "INTEGER"}]
 
 
+def test_get_virtual_table_metadata_command_dataset(mocker: MockerFixture) -> None:
+    mocker.patch(
+        "superset.connectors.sqla.utils.get_command_columns_description",
+        return_value=[{"name": "Id", "type": "BIGINT"}],
+    )
+    dataset = mocker.MagicMock(sql="SHOW FRONTENDS")
+    dataset.catalog = None
+    dataset.schema = None
+    dataset.database.db_engine_spec.engine = "starrocks"
+    dataset.database.db_engine_spec.get_command_dataset_sql.return_value = (
+        "SHOW FRONTENDS"
+    )
+    dataset.get_template_processor().process_template.return_value = dataset.sql
+
+    assert get_virtual_table_metadata(dataset) == [{"name": "Id", "type": "BIGINT"}]
+
+
 def test_get_virtual_table_metadata_mutating(mocker: MockerFixture) -> None:
     """
     Test the `get_virtual_table_metadata` function with mutating SQL.

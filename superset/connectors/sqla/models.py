@@ -103,6 +103,7 @@ from superset.models.helpers import (
     QueryResult,
 )
 from superset.models.slice import Slice
+from superset.result_set import SupersetResultSet
 from superset.sql.parse import Table
 from superset.superset_typing import (
     AdhocColumn,
@@ -159,6 +160,20 @@ COLUMN_FORM_DATA_PARAMS = [
     "order_by_cols",
     "series",
 ]
+
+COMMAND_DATASET_EXTRA_KEY = "command_dataset"
+
+
+def get_command_dataset_extra(command_sql: str) -> dict[str, Any]:
+    return {
+        COMMAND_DATASET_EXTRA_KEY: {
+            "enabled": True,
+            "mode": "raw_command",
+            "sql": command_sql,
+            "allowed_viz_types": ["table"],
+        },
+        "disallow_adhoc_metrics": True,
+    }
 
 
 class DatasourceKind(StrEnum):
@@ -1361,6 +1376,9 @@ class SqlaTable(
     def data(self) -> dict[str, Any]:
         data_ = super().data
         if self.type == "table":
+            extra = self.extra_dict
+            if self.is_command_dataset:
+                extra = {**extra, **self.command_dataset_extra}
             data_["granularity_sqla"] = self.granularity_sqla
             data_["time_grain_sqla"] = self.time_grain_sqla
             data_["main_dttm_col"] = self.main_dttm_col
@@ -1368,10 +1386,15 @@ class SqlaTable(
             data_["template_params"] = self.template_params
             data_["is_sqllab_view"] = self.is_sqllab_view
             data_["health_check_message"] = self.health_check_message
-            data_["extra"] = self.extra
+            data_["extra"] = extra or self.extra
             data_["owners"] = self.owners_data
             data_["always_filter_main_dttm"] = self.always_filter_main_dttm
             data_["normalize_columns"] = self.normalize_columns
+            if self.is_command_dataset:
+                data_["metrics"] = []
+                data_["granularity_sqla"] = []
+                data_["time_grain_sqla"] = []
+                data_["main_dttm_col"] = None
         return data_
 
     @property
@@ -1380,6 +1403,149 @@ class SqlaTable(
             return json.loads(self.extra)
         except (TypeError, json.JSONDecodeError):
             return {}
+
+    @property
+    def command_dataset_sql(self) -> str | None:
+        if not self.sql:
+            return None
+        try:
+            rendered_sql = self.sql.strip("\t\r\n; ")
+            rendered_sql = self.get_template_processor().process_template(
+                rendered_sql,
+                **self.template_params_dict,
+            )
+        except (TemplateError, SupersetSyntaxErrorException, QueryObjectValidationError):
+            return None
+        return self.db_engine_spec.get_command_dataset_sql(rendered_sql)
+
+    @property
+    def is_command_dataset(self) -> bool:
+        return bool(self.command_dataset_sql)
+
+    @property
+    def command_dataset_extra(self) -> dict[str, Any]:
+        command_sql = self.command_dataset_sql
+        return get_command_dataset_extra(command_sql) if command_sql else {}
+
+    def _get_query_command_dataset_columns(
+        self,
+        query_obj: QueryObjectDict,
+    ) -> list[str]:
+        selected_columns: list[str] = []
+        for column_ in cast(list[AdhocColumn | str], query_obj.get("columns") or []):
+            if isinstance(column_, str):
+                selected_columns.append(column_)
+            elif label := utils.get_column_name(column_):
+                selected_columns.append(label)
+        return selected_columns
+
+    def _get_query_command_dataset_orderby(
+        self,
+        query_obj: QueryObjectDict,
+    ) -> list[tuple[str, bool]]:
+        normalized_orderby: list[tuple[str, bool]] = []
+        for orderby in cast(list[Any], query_obj.get("orderby") or []):
+            if not isinstance(orderby, (list, tuple)) or len(orderby) != 2:
+                continue
+
+            column_, ascending = orderby
+            if isinstance(column_, str):
+                normalized_orderby.append((column_, bool(ascending)))
+            elif label := utils.get_column_name(cast(AdhocColumn, column_)):
+                normalized_orderby.append((label, bool(ascending)))
+
+        return normalized_orderby
+
+    def _validate_command_dataset_query(self, query_obj: QueryObjectDict) -> None:
+        unsupported_fields: list[str] = []
+        if query_obj.get("metrics"):
+            unsupported_fields.append("metrics")
+        if query_obj.get("granularity"):
+            unsupported_fields.append("granularity")
+        if query_obj.get("series_columns"):
+            unsupported_fields.append("series_columns")
+        if query_obj.get("series_limit"):
+            unsupported_fields.append("series_limit")
+        if query_obj.get("series_limit_metric"):
+            unsupported_fields.append("series_limit_metric")
+        if query_obj.get("is_rowcount"):
+            unsupported_fields.append("is_rowcount")
+
+        if unsupported_fields:
+            raise QueryObjectValidationError(
+                _(
+                    "Command datasets only support raw table queries. Unsupported fields: %(fields)s",
+                    fields=", ".join(sorted(unsupported_fields)),
+                )
+            )
+
+    def query_command_dataset(self, query_obj: QueryObjectDict) -> QueryResult:
+        qry_start_dttm = datetime.now()
+        sql = self.command_dataset_sql
+        if not sql:
+            raise QueryObjectValidationError(_("Dataset is not a command dataset"))
+
+        self._validate_command_dataset_query(query_obj)
+
+        status = QueryStatus.SUCCESS
+        errors = None
+        error_message = None
+        df = pd.DataFrame()
+
+        try:
+            with self.database.get_raw_connection(
+                catalog=self.catalog,
+                schema=self.schema or None,
+            ) as conn:
+                cursor = conn.cursor()
+                self.db_engine_spec.execute(cursor, sql, self.database)
+                result = self.db_engine_spec.fetch_data(cursor)
+                result_set = SupersetResultSet(result, cursor.description, self.db_engine_spec)
+                df = self.database.post_process_df(result_set.to_pandas_df())
+
+            if orderby := [
+                (column_, ascending)
+                for column_, ascending in self._get_query_command_dataset_orderby(
+                    query_obj
+                )
+                if column_ in df.columns
+            ]:
+                df = df.sort_values(
+                    by=[column_ for column_, _ascending in orderby],
+                    ascending=[ascending for _column, ascending in orderby],
+                    kind="stable",
+                )
+
+            if selected_columns := self._get_query_command_dataset_columns(query_obj):
+                available_columns = [
+                    column_ for column_ in selected_columns if column_ in df.columns
+                ]
+                if available_columns:
+                    df = df.loc[:, available_columns]
+        except (SupersetErrorException, SupersetErrorsException):
+            raise
+        except Exception as ex:  # pylint: disable=broad-except
+            status = QueryStatus.FAILED
+            logger.warning(
+                "Command dataset query %s on schema %s failed",
+                sql,
+                self.schema,
+                exc_info=True,
+            )
+            errors = [
+                dataclasses.asdict(error)
+                for error in self.db_engine_spec.extract_errors(ex)
+            ]
+            error_message = utils.error_msg_from_exception(ex)
+
+        return QueryResult(
+            status=status,
+            df=df,
+            duration=datetime.now() - qry_start_dttm,
+            query=sql,
+            errors=errors,
+            error_message=error_message,
+        )
 
     def get_fetch_values_predicate(
         self,
@@ -1435,6 +1601,10 @@ class SqlaTable(
     ) -> tuple[TableClause | Alias, str | None]:
         if not self.is_virtual:
             return self.get_sqla_table(), None
+        if self.is_command_dataset:
+            raise QueryObjectValidationError(
+                _("Command datasets cannot be wrapped as subqueries")
+            )
 
         return super().get_from_clause(template_processor)
 
@@ -1623,6 +1793,9 @@ class SqlaTable(
         return or_(*groups)
 
     def query(self, query_obj: QueryObjectDict) -> QueryResult:
+        if self.is_command_dataset:
+            return self.query_command_dataset(query_obj)
+
         qry_start_dttm = datetime.now()
         query_str_ext = self.get_query_str_extended(query_obj)
         sql = query_str_ext.sql
@@ -1710,16 +1883,20 @@ class SqlaTable(
         :return: Tuple with lists of added, removed and modified column names.
         """
         new_columns = self.external_metadata()
-        metrics = [
-            SqlMetric(**metric)
-            for metric in self.database.get_metrics(
-                Table(
-                    self.table_name,
-                    self.schema or None,
-                    self.catalog,
+        metrics = (
+            []
+            if self.is_command_dataset
+            else [
+                SqlMetric(**metric)
+                for metric in self.database.get_metrics(
+                    Table(
+                        self.table_name,
+                        self.schema or None,
+                        self.catalog,
+                    )
                 )
-            )
-        ]
+            ]
+        )
         any_date_col = None
         db_engine_spec = self.db_engine_spec
 
@@ -1784,7 +1961,10 @@ class SqlaTable(
 
         if not self.main_dttm_col:
             self.main_dttm_col = any_date_col
-        self.add_missing_metrics(metrics)
+        if self.is_command_dataset:
+            self.metrics = []
+        else:
+            self.add_missing_metrics(metrics)
 
         # Apply config supplied mutations.
         current_app.config["SQLA_TABLE_MUTATOR"](self)
@@ -1927,6 +2107,8 @@ class SqlaTable(
         from superset.utils.rls import collect_rls_predicates_for_sql
 
         extra_cache_keys = super().get_extra_cache_keys(query_obj)
+        if self.is_command_dataset:
+            return extra_cache_keys
         if self.has_extra_cache_key_calls(query_obj):
             sqla_query = self.get_sqla_query(**query_obj)
             extra_cache_keys += sqla_query.extra_cache_keys
@@ -1999,6 +2181,8 @@ class SqlaTable(
 
     def get_query_str(self, query_obj: QueryObjectDict) -> str:
         """Returns a query as a string using ExploreMixin implementation"""
+        if self.is_command_dataset:
+            return self.command_dataset_sql or self.sql or ""
         return ExploreMixin.get_query_str(self, query_obj)
 
     def text(self, clause: str) -> TextClause:
