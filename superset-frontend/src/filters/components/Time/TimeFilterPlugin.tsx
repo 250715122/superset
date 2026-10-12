@@ -23,7 +23,7 @@ import {
   t,
 } from '@superset-ui/core';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
-import { FormItem, type FormItemProps } from '@superset-ui/core/components';
+import { type FormItemProps } from '@superset-ui/core/components';
 import DateFilterControl from 'src/explore/components/controls/DateFilterControl';
 import {
   fetchTimeRangeDetails,
@@ -31,7 +31,7 @@ import {
   validateTimeRangeLimit,
 } from 'src/explore/components/controls/DateFilterControl/utils';
 import { PluginFilterTimeProps } from './types';
-import { FilterPluginStyle, StatusMessage } from '../common';
+import { FilterPluginStyle, StatusMessage, StyledFormItem } from '../common';
 
 const TimeFilterStyles = styled(FilterPluginStyle)`
   display: flex;
@@ -41,6 +41,10 @@ const TimeFilterStyles = styled(FilterPluginStyle)`
   & .ant-tag {
     margin-right: 0;
   }
+`;
+
+const TimeFilterFormItem = styled(StyledFormItem)`
+  width: 100%;
 `;
 
 const ControlContainer = styled.div<{
@@ -201,7 +205,10 @@ export default function TimeFilterPlugin(props: PluginFilterTimeProps) {
 
   return props.formData?.inView ? (
     <TimeFilterStyles width={width} height={height}>
-      <FormItem validateStatus={filterState.validateStatus} {...formItemData}>
+      <TimeFilterFormItem
+        validateStatus={filterState.validateStatus}
+        {...formItemData}
+      >
         <ControlContainer
           ref={inputRef}
           validateStatus={filterState.validateStatus}
@@ -230,7 +237,7 @@ export default function TimeFilterPlugin(props: PluginFilterTimeProps) {
             validateStatus={filterState.validateStatus}
           />
         </ControlContainer>
-      </FormItem>
+      </TimeFilterFormItem>
     </TimeFilterStyles>
   ) : null;
 }
