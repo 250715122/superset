@@ -1019,7 +1019,7 @@ msgid "Adjust performance settings of this database."
 msgstr "调整此数据库的性能设置"
 
 msgid "Advanced"
-msgstr "高级选项"
+msgstr "高级"
 
 msgid "Advanced Analytics"
 msgstr "高级分析"
@@ -3016,17 +3016,16 @@ msgid "Configuration"
 msgstr "配置"
 
 msgid "Configure Advanced Time Range "
-msgstr "配置进阶时间范围"
+msgstr "配置高级时间范围"
 
-#, fuzzy
 msgid "Configure Time Range: Current..."
-msgstr "配置时间范围：最近..."
+msgstr "配置时间范围：当前..."
 
 msgid "Configure Time Range: Last..."
 msgstr "配置时间范围：最近..."
 
 msgid "Configure Time Range: Previous..."
-msgstr "配置时间范围：上一期..."
+msgstr "配置时间范围：上一..."
 
 msgid "Configure custom time range"
 msgstr "配置自定义时间范围"
@@ -3361,29 +3360,23 @@ msgstr "货币前缀或后缀"
 msgid "Currency symbol"
 msgstr "货币符号"
 
-#, fuzzy
 msgid "Current"
-msgstr "货币"
+msgstr "当前"
 
-#, fuzzy
 msgid "Current day"
-msgstr "货币"
+msgstr "当天"
 
-#, fuzzy
 msgid "Current month"
-msgstr "货币符号"
+msgstr "本月"
 
-#, fuzzy
 msgid "Current quarter"
-msgstr "运行查询"
+msgstr "本季度"
 
-#, fuzzy
 msgid "Current week"
-msgstr "运行查询"
+msgstr "本周"
 
-#, fuzzy
 msgid "Current year"
-msgstr "货币"
+msgstr "本年"
 
 #, python-format
 msgid "Currently rendered: %s"
@@ -5357,9 +5350,8 @@ msgstr "过滤类型"
 msgid "Filter value (case sensitive)"
 msgstr "过滤值（区分大小写）"
 
-#, fuzzy
 msgid "Filter value is required"
-msgstr "过滤器制是必须的"
+msgstr "筛选值为必填项"
 
 msgid "Filter value list cannot be empty"
 msgstr "过滤器值列表不能为空"
@@ -6331,7 +6323,7 @@ msgid "Large"
 msgstr "大"
 
 msgid "Last"
-msgstr "最后一个"
+msgstr "最近"
 
 #, python-format
 msgid "Last Updated %s"
@@ -6349,9 +6341,8 @@ msgstr "目标值"
 msgid "Last available value seen on %s"
 msgstr "到 %s 最后一个可用值"
 
-#, fuzzy
 msgid "Last day"
-msgstr "昨天"
+msgstr "最近一天"
 
 #, fuzzy
 msgid "Last login"
@@ -6360,9 +6351,8 @@ msgstr "上一月"
 msgid "Last modified"
 msgstr "最后修改"
 
-#, fuzzy
 msgid "Last month"
-msgstr "上一月"
+msgstr "最近一月"
 
 #, fuzzy
 msgid "Last name"
@@ -6372,20 +6362,17 @@ msgstr "数据集名称"
 msgid "Last name is required"
 msgstr "需要名称"
 
-#, fuzzy
 msgid "Last quarter"
-msgstr "上一季度"
+msgstr "最近一季度"
 
 msgid "Last run"
 msgstr "上次执行"
 
-#, fuzzy
 msgid "Last week"
-msgstr "上一周"
+msgstr "最近一周"
 
-#, fuzzy
 msgid "Last year"
-msgstr "上一年"
+msgstr "最近一年"
 
 #, fuzzy
 msgid "Lat"
@@ -6983,7 +6970,7 @@ msgid "Middle"
 msgstr "中间"
 
 msgid "Midnight"
-msgstr "凌晨（当天）"
+msgstr "今日零点"
 
 #, fuzzy
 msgid "Miles"
@@ -7362,7 +7349,7 @@ msgid "No entities have this tag currently assigned"
 msgstr ""
 
 msgid "No filter"
-msgstr "无筛选"
+msgstr "不筛选"
 
 msgid "No filter is selected."
 msgstr "未选择过滤条件。"
@@ -7548,7 +7535,7 @@ msgid "November"
 msgstr "十一月"
 
 msgid "Now"
-msgstr "现在"
+msgstr "当前时刻"
 
 #, fuzzy
 msgid "Null Values"
@@ -8358,7 +8345,7 @@ msgid "Preview uploaded file"
 msgstr "上传Excel"
 
 msgid "Previous"
-msgstr "前一个"
+msgstr "上一"
 
 #, fuzzy
 msgid "Previous Line"
@@ -10306,7 +10293,7 @@ msgid "Spatial"
 msgstr "空间"
 
 msgid "Specific Date/Time"
-msgstr "具体日期/时间"
+msgstr "指定日期/时间"
 
 msgid "Specify name to CREATE TABLE AS schema in: public"
 msgstr ""
@@ -14400,17 +14387,16 @@ msgid "pixels"
 msgstr "像素"
 
 msgid "previous calendar month"
-msgstr "前一月"
+msgstr "上一个自然月"
 
-#, fuzzy
 msgid "previous calendar quarter"
-msgstr "前一年"
+msgstr "上一个自然季度"
 
 msgid "previous calendar week"
-msgstr "前一周"
+msgstr "上一个自然周"
 
 msgid "previous calendar year"
-msgstr "前一年"
+msgstr "上一个自然年"
 
 #, fuzzy
 msgid "quarter"
@@ -14620,83 +14606,11 @@ msgstr ""
 msgid "y: values are normalized within each row"
 msgstr ""
 
-msgid "Actual time range"
-msgstr "实际时间范围"
-
-msgid "Advanced"
-msgstr "高级"
-
-msgid "After"
-msgstr "之后"
-
-msgid "Before"
-msgstr "之前"
-
-msgid "Configure Advanced Time Range "
-msgstr "配置高级时间范围"
-
-msgid "Configure Time Range: Current..."
-msgstr "配置时间范围：当前..."
-
-msgid "Configure Time Range: Last..."
-msgstr "配置时间范围：最近..."
-
-msgid "Configure Time Range: Previous..."
-msgstr "配置时间范围：上一..."
-
-msgid "Configure custom time range"
-msgstr "配置自定义时间范围"
-
-msgid "Current"
-msgstr "当前"
-
-msgid "Current day"
-msgstr "当天"
-
-msgid "Current month"
-msgstr "本月"
-
-msgid "Current quarter"
-msgstr "本季度"
-
-msgid "Current week"
-msgstr "本周"
-
-msgid "Current year"
-msgstr "本年"
-
-msgid "Custom"
-msgstr "自定义"
-
-msgid "day"
-msgstr "天"
-
 msgid "days"
 msgstr "天"
 
 msgid "Days"
 msgstr "天"
-
-msgid "Edit time range"
-msgstr "编辑时间范围"
-
-msgid "Last"
-msgstr "最近"
-
-msgid "Last day"
-msgstr "最近一天"
-
-msgid "Last month"
-msgstr "最近一月"
-
-msgid "Last quarter"
-msgstr "最近一季度"
-
-msgid "Last week"
-msgstr "最近一周"
-
-msgid "Last year"
-msgstr "最近一年"
 
 msgid "Limit selectable time range"
 msgstr "限制可选时间范围"
@@ -14710,62 +14624,23 @@ msgstr "最大范围值"
 msgid "Maximum range unit"
 msgstr "最大范围单位"
 
-msgid "Midnight"
-msgstr "今日零点"
-
-msgid "month"
-msgstr "月"
-
 msgid "months"
 msgstr "月"
 
 msgid "Months"
 msgstr "月"
 
-msgid "No filter"
-msgstr "不筛选"
-
-msgid "Now"
-msgstr "当前时刻"
-
 msgid "Prevent this dashboard time filter from querying overly large time windows."
 msgstr "限制此时间筛选器可选择的最大时间窗口，避免发起过大的查询。"
-
-msgid "Previous"
-msgstr "上一"
-
-msgid "previous calendar month"
-msgstr "上一个自然月"
-
-msgid "previous calendar quarter"
-msgstr "上一个自然季度"
-
-msgid "previous calendar week"
-msgstr "上一个自然周"
-
-msgid "previous calendar year"
-msgstr "上一个自然年"
 
 msgid "Range type"
 msgstr "范围类型"
 
-msgid "Relative Date/Time"
-msgstr "相对日期/时间"
-
 msgid "Select a bounded time range no longer than %(max_range)s."
 msgstr "请选择一个有明确起止且不超过%(max_range)s的时间范围。"
 
-msgid "Specific Date/Time"
-msgstr "指定日期/时间"
-
 msgid "This filter will only allow time ranges up to %(max_range)s."
 msgstr "此筛选器只允许选择不超过%(max_range)s的时间范围。"
-
-msgid "Time range"
-msgstr "时间范围"
-
-msgid "week"
-msgstr "周"
 
 msgid "weeks"
 msgstr "周"
@@ -14784,6 +14659,12 @@ msgstr "年"
 
 msgid "zoom area"
 msgstr "缩放面积"
+
+msgid "Start (inclusive)"
+msgstr "开始（包含）"
+
+msgid "End (exclusive)"
+msgstr "结束（不包含）"
 
 msgid "© Layer attribution"
 msgstr ""
