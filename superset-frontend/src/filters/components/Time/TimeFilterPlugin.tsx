@@ -22,11 +22,8 @@ import {
   getExtensionsRegistry,
   t,
 } from '@superset-ui/core';
-import { useCallback, useEffect, useMemo } from 'react';
-import {
-  FormItem,
-  type FormItemProps,
-} from '@superset-ui/core/components';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { FormItem, type FormItemProps } from '@superset-ui/core/components';
 import DateFilterControl from 'src/explore/components/controls/DateFilterControl';
 import {
   fetchTimeRangeDetails,
@@ -106,8 +103,21 @@ export default function TimeFilterPlugin(props: PluginFilterTimeProps) {
   );
   const DateFilterComponent = DateFilterControlExtension ?? DateFilterControl;
 
+  // Parents (e.g. the filter config modal) may pass a new setDataMask on every
+  // render; depending on it would re-run the effect below after each update.
+  const setDataMaskRef = useRef(setDataMask);
+  setDataMaskRef.current = setDataMask;
+  const latestRequestRef = useRef(0);
+
   const handleTimeRangeChange = useCallback(
     async (timeRange?: string): Promise<void> => {
+      const requestId = latestRequestRef.current + 1;
+      latestRequestRef.current = requestId;
+      const applyDataMask: typeof setDataMask = dataMask => {
+        if (requestId === latestRequestRef.current) {
+          setDataMaskRef.current(dataMask);
+        }
+      };
       const isSet = timeRange && timeRange !== NO_TIME_RANGE;
       const validationMessage = maxTimeRangeLabel
         ? t('Select a bounded time range no longer than %(max_range)s.', {
@@ -117,7 +127,7 @@ export default function TimeFilterPlugin(props: PluginFilterTimeProps) {
 
       if (maxTimeRangeLabel) {
         if (!isSet) {
-          setDataMask({
+          applyDataMask({
             extraFormData: {},
             filterState: {
               value: timeRange || NO_TIME_RANGE,
@@ -130,7 +140,7 @@ export default function TimeFilterPlugin(props: PluginFilterTimeProps) {
 
         const { error, since, until } = await fetchTimeRangeDetails(timeRange);
         if (error) {
-          setDataMask({
+          applyDataMask({
             extraFormData: {},
             filterState: {
               value: timeRange,
@@ -148,7 +158,7 @@ export default function TimeFilterPlugin(props: PluginFilterTimeProps) {
           maxTimeRangeUnit,
         });
         if (!validationResult.isValid) {
-          setDataMask({
+          applyDataMask({
             extraFormData: {},
             filterState: {
               value: timeRange,
@@ -160,7 +170,7 @@ export default function TimeFilterPlugin(props: PluginFilterTimeProps) {
         }
       }
 
-      setDataMask({
+      applyDataMask({
         extraFormData: isSet
           ? {
               time_range: timeRange,
@@ -173,16 +183,11 @@ export default function TimeFilterPlugin(props: PluginFilterTimeProps) {
         },
       });
     },
-    [
-      maxTimeRangeLabel,
-      maxTimeRangeUnit,
-      maxTimeRangeValue,
-      setDataMask,
-    ],
+    [maxTimeRangeLabel, maxTimeRangeUnit, maxTimeRangeValue],
   );
 
   useEffect(() => {
-    void handleTimeRangeChange(filterState.value);
+    handleTimeRangeChange(filterState.value);
   }, [filterState.value, handleTimeRangeChange]);
 
   const formItemData: FormItemProps = {};
@@ -210,7 +215,7 @@ export default function TimeFilterPlugin(props: PluginFilterTimeProps) {
             value={filterState.value || NO_TIME_RANGE}
             name={props.formData.nativeFilterId || 'time_range'}
             onChange={timeRange => {
-              void handleTimeRangeChange(timeRange);
+              handleTimeRangeChange(timeRange);
             }}
             onOpenPopover={() => setFilterActive(true)}
             onClosePopover={() => {
