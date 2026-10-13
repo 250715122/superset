@@ -6,6 +6,9 @@
 2. 用户清单 shows the configured resource group binding (parsed from
    SHOW RESOURCE GROUPS ALL by sync_sr_rg_bindings.py) instead of the groups
    observed in the audit log.
+3. 用户清单 column headers: the chart still carried the column_config of the
+   dataset it used before being repointed, so the table rendered raw column
+   names.
 
 Idempotent.
 """
@@ -59,6 +62,20 @@ LEFT JOIN (
 ) a ON a.user_name = u.user_name
 """
 
+USERS_VERBOSE = {
+    "user_name": "用户",
+    "resource_group": "资源组",
+    "query_n_7d": "近7天查询数",
+}
+USERS_COLUMN_CONFIG = {
+    "用户": {"column_title": "用户"},
+    "资源组": {"column_title": "资源组"},
+    "近7天查询数": {"column_title": "近7天查询数", "showCellBars": True},
+}
+USERS_DESC = ("用户清单。资源组取 SHOW RESOURCE GROUPS ALL 的 classifier 配置绑定"
+              "（每小时采集），不是审计日志里实际跑过的组；无 classifier 的用户"
+              "显示 -，实际落 default_wg。")
+
 
 def main():
     with app.app_context():
@@ -91,7 +108,20 @@ def main():
 
         ds.sql = USERS_SQL
         ds.description = "用户清单 + 资源组（SHOW RESOURCE GROUPS ALL 配置绑定）"
+        for col in ds.columns:
+            if col.column_name in USERS_VERBOSE:
+                col.verbose_name = USERS_VERBOSE[col.column_name]
         print("DS|%s|v_show_users_rg updated" % ds.id)
+
+        users = db.session.query(Slice).filter_by(slice_name="用户清单").one()
+        up = json.loads(users.params)
+        print("COLUMN_CONFIG|%s -> %s"
+              % (sorted((up.get("column_config") or {}).keys()),
+                 sorted(USERS_COLUMN_CONFIG.keys())))
+        up["column_config"] = USERS_COLUMN_CONFIG
+        users.params = json.dumps(up, ensure_ascii=False)
+        users.description = USERS_DESC
+        users.query_context = None
 
         db.session.commit()
         print("COMMIT_OK")

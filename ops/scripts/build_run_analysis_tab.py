@@ -4,8 +4,8 @@
 All datasets query StarRocks live (audit log + information_schema + SHOW PROC);
 nothing depends on the stale ads_ops_cockpit_* / ads_sr_global_* snapshots.
 
-Also repoints the existing 用户清单 chart to a dataset that carries the
-resource group actually used by each account over the last 7 days.
+Also repoints the existing 用户清单 chart to a dataset that carries each
+account's configured resource group, collected hourly by sync_sr_rg_bindings.py.
 
 Idempotent: re-running replaces the tab content and updates the charts in place.
 """
@@ -217,6 +217,20 @@ USERS_COLS = [
     ("query_n_7d", "BIGINT", False),
 ]
 
+USERS_VERBOSE = {
+    "user_name": "用户",
+    "resource_group": "资源组",
+    "query_n_7d": "近7天查询数",
+}
+USERS_COLUMN_CONFIG = {
+    "用户": {"column_title": "用户"},
+    "资源组": {"column_title": "资源组"},
+    "近7天查询数": {"column_title": "近7天查询数", "showCellBars": True},
+}
+USERS_DESC = ("用户清单。资源组取 SHOW RESOURCE GROUPS ALL 的 classifier 配置绑定"
+              "（每小时采集），不是审计日志里实际跑过的组；无 classifier 的用户"
+              "显示 -，实际落 default_wg。")
+
 
 def rid(prefix):
     return "%s-%s" % (prefix, uuid.uuid4().hex[:10])
@@ -334,7 +348,8 @@ def main():
         os.makedirs(BACKUP_DIR, exist_ok=True)
 
         def ensure_ds(database, name, sql, cols, desc, main_dttm=None,
-                      fetch_pred=None):
+                      fetch_pred=None, verbose=None):
+            verbose = verbose or {}
             ds = (db.session.query(SqlaTable)
                   .filter_by(table_name=name, database_id=database.id).first())
             if ds is None:
@@ -353,9 +368,11 @@ def main():
                 if cname in have:
                     col = have[cname]
                     col.type, col.is_dttm = ctype, is_dttm
+                    col.verbose_name = verbose.get(cname)
                 else:
                     ds.columns.append(TableColumn(
                         column_name=cname, type=ctype, is_dttm=is_dttm,
+                        verbose_name=verbose.get(cname),
                         groupby=True, filterable=True))
             for col in list(ds.columns):
                 if col.column_name not in want:
@@ -387,7 +404,8 @@ def main():
             "运行分析·调度任务失败（information_schema.task_runs）", "create_time")
         ds_users = ensure_ds(
             db_priv, "v_show_users_rg", USERS_SQL, USERS_COLS,
-            "用户清单 + 资源组（SHOW RESOURCE GROUPS ALL 配置绑定）")
+            "用户清单 + 资源组（SHOW RESOURCE GROUPS ALL 配置绑定）",
+            verbose=USERS_VERBOSE)
 
         # ---------------- smoke tests ----------------
         checks = [
@@ -503,8 +521,12 @@ def main():
             p["all_columns"] = ["user_name", "resource_group", "query_n_7d"]
             p["order_by_cols"] = [json.dumps(["user_name", True])]
             p["row_limit"] = 500
+            # column_config keys on the verbose name, so stale keys from the
+            # previous dataset would leave the headers rendering raw column names
+            p["column_config"] = USERS_COLUMN_CONFIG
             sl_users.datasource_id = ds_users.id
             sl_users.params = json.dumps(p, ensure_ascii=False)
+            sl_users.description = USERS_DESC
             sl_users.query_context = None
             print("SLICE_UPD|用户清单|%s|ds=%s" % (sl_users.id, ds_users.id))
 
