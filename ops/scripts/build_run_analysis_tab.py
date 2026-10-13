@@ -7,7 +7,11 @@ nothing depends on the stale ads_ops_cockpit_* / ads_sr_global_* snapshots.
 Also repoints the existing 用户清单 chart to a dataset that carries each
 account's configured resource group, collected hourly by sync_sr_rg_bindings.py.
 
-Idempotent: re-running replaces the tab content and updates the charts in place.
+DO NOT RE-RUN. This built the original single 运行分析 tab. That tab has since
+been split by hand into 运行状态 + 性能分析, and re-running this would rebuild
+the one-tab layout and throw the split away. The dataset SQL below is kept in
+sync with production for reference only; current changes go through
+apply_run_status_rework.py.
 """
 from __future__ import annotations
 
@@ -70,6 +74,7 @@ SELECT
   clientIp AS client_ip,
   queryId AS query_id,
   digest AS digest,
+  SUBSTR(stmt, 1, 200) AS sql_200,
   SUBSTR(stmt, 1, 1000) AS stmt_head
 FROM audit_db.audit
 """
@@ -84,7 +89,7 @@ AUDIT_COLS = [
     ("scan_bytes", "BIGINT", False), ("return_rows", "BIGINT", False),
     ("pending_ms", "BIGINT", False), ("client_ip", "VARCHAR", False),
     ("query_id", "VARCHAR", False), ("digest", "VARCHAR", False),
-    ("stmt_head", "VARCHAR", False),
+    ("sql_200", "VARCHAR", False), ("stmt_head", "VARCHAR", False),
 ]
 
 CURQ_SQL = "SHOW PROC '/current_queries'"
@@ -102,27 +107,62 @@ CURQ_COLS = [
 
 # information_schema.loads keeps roughly one day of jobs and is dominated by
 # per-table stream/insert loads, so roll it up instead of listing raw jobs.
+# information_schema.loads already carries STREAM_LOAD / BROKER LOAD /
+# SPARK LOAD next to INSERT, so stream_loads is deliberately not unioned in
+# (it would double count). Routine load and pipe live in their own tables.
 LOADS_SQL = r"""
 SELECT
+  `TYPE` AS load_type,
   DB_NAME AS db_name,
   TABLE_NAME AS table_name,
-  `TYPE` AS load_type,
   COUNT(*) AS job_n,
   SUM(CASE WHEN STATE = 'FINISHED' THEN 1 ELSE 0 END) AS finished_n,
   SUM(CASE WHEN STATE IN ('CANCELLED', 'FAILED', 'ERROR') THEN 1 ELSE 0 END) AS failed_n,
   SUM(CASE WHEN STATE NOT IN ('FINISHED', 'CANCELLED', 'FAILED', 'ERROR') THEN 1 ELSE 0 END) AS running_n,
-  SUM(SINK_ROWS) AS sink_rows,
-  SUM(FILTERED_ROWS) AS filtered_rows,
+  CAST(SUM(SINK_ROWS) AS BIGINT) AS sink_rows,
+  CAST(SUM(FILTERED_ROWS) AS BIGINT) AS filtered_rows,
   CAST(MAX(CREATE_TIME) AS VARCHAR) AS last_create_time,
   CAST(MAX(LOAD_FINISH_TIME) AS VARCHAR) AS last_finish_time,
-  MAX(ERROR_MSG) AS last_error
+  CAST(MAX(ERROR_MSG) AS VARCHAR) AS last_error
 FROM information_schema.loads
+GROUP BY 1, 2, 3
+UNION ALL
+SELECT
+  'ROUTINE_LOAD' AS load_type,
+  DB_NAME AS db_name,
+  TABLE_NAME AS table_name,
+  COUNT(*) AS job_n,
+  SUM(CASE WHEN STATE = 'STOPPED' THEN 1 ELSE 0 END) AS finished_n,
+  SUM(CASE WHEN STATE IN ('CANCELLED', 'PAUSED') THEN 1 ELSE 0 END) AS failed_n,
+  SUM(CASE WHEN STATE = 'RUNNING' THEN 1 ELSE 0 END) AS running_n,
+  CAST(0 AS BIGINT) AS sink_rows,
+  CAST(0 AS BIGINT) AS filtered_rows,
+  CAST(MAX(CREATE_TIME) AS VARCHAR) AS last_create_time,
+  CAST(MAX(END_TIME) AS VARCHAR) AS last_finish_time,
+  CAST(MAX(REASONS_OF_STATE_CHANGED) AS VARCHAR) AS last_error
+FROM information_schema.routine_load_jobs
+GROUP BY 1, 2, 3
+UNION ALL
+SELECT
+  'PIPE' AS load_type,
+  DATABASE_NAME AS db_name,
+  TABLE_NAME AS table_name,
+  COUNT(*) AS job_n,
+  SUM(CASE WHEN STATE = 'FINISHED' THEN 1 ELSE 0 END) AS finished_n,
+  SUM(CASE WHEN STATE = 'ERROR' THEN 1 ELSE 0 END) AS failed_n,
+  SUM(CASE WHEN STATE = 'RUNNING' THEN 1 ELSE 0 END) AS running_n,
+  CAST(0 AS BIGINT) AS sink_rows,
+  CAST(0 AS BIGINT) AS filtered_rows,
+  CAST(MAX(CREATED_TIME) AS VARCHAR) AS last_create_time,
+  CAST(NULL AS VARCHAR) AS last_finish_time,
+  CAST(MAX(LAST_ERROR) AS VARCHAR) AS last_error
+FROM information_schema.pipes
 GROUP BY 1, 2, 3
 """
 
 LOADS_COLS = [
-    ("db_name", "VARCHAR", False), ("table_name", "VARCHAR", False),
-    ("load_type", "VARCHAR", False), ("job_n", "BIGINT", False),
+    ("load_type", "VARCHAR", False), ("db_name", "VARCHAR", False),
+    ("table_name", "VARCHAR", False), ("job_n", "BIGINT", False),
     ("finished_n", "BIGINT", False), ("failed_n", "BIGINT", False),
     ("running_n", "BIGINT", False), ("sink_rows", "BIGINT", False),
     ("filtered_rows", "BIGINT", False),
