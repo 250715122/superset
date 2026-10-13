@@ -130,7 +130,7 @@ python jump_run.py "$env:TEMP\_cmd.txt" 240 2>&1 | Select-String "DONE|FIX|SKIP|
 6. **改名/改指向后 perm 不同步**：数据集 `table_name` 改了要同步 `perm = t.get_perm()` 并 `add_permission_view_menu('datasource_access', perm)`，否则鉴权错乱。
 7. **权限调试别只看角色**：若"角色明明没有写权限，用户却能写"，先查 **Public 角色**（`PUBLIC_ROLE_LIKE` 会把 Gamma 权限复制给它，FAB 的 `is_item_public` 会先于角色判定放行）。详见第六节专题。
 8. **看板设了 RBAC 角色列表 = 对其他所有角色隐藏**：给某看板挂了角色后，别的只读角色就看不到它了，需要把新角色一并加进该看板的允许列表。
-9. **`chartsInScope` 跨环境不可信**：它是缓存字段，看板导入时不会被重映射（`scope.excluded` 会），生产里存的可能还是开发的图表 id。判断筛选器作用域要用 `scope.excluded` 推导（全部图表 − excluded），与前端 `DashboardContainer.tsx` 的算法一致。详见第六节时间筛选器专题。
+9. **`chartsInScope` 跨环境不可信**：它是缓存字段，看板导入时不会被重映射（`scope.excluded` 会），生产里存的可能还是开发的图表 id。判断筛选器作用域要用 `scope.excluded` 推导（全部图表 − excluded）。**库里的漂移是无害的**：`DashboardContainer.tsx` 每次加载看板都会用 `getChartIdsInFilterScope(scope, ...)` 重算并 `setInScopeStatusOfFilters` 覆盖 redux（运行时 `activeAllDashboardFilters.ts` 虽然优先读 `chartsInScope`，读到的已是重算值），所以巡检出漂移不必逐个"修"——用 `_check_filter_scope.py` 看一眼即可，两环境现存 20+ 处都是历史陈旧缓存。详见第六节时间筛选器专题。
 10. **时间范围筛选器需要图表侧有"接线"**：图表必须带一个 `TEMPORAL_RANGE` adhoc 过滤器（comparator 填 `"No filter"` 即可）来提供时间列，否则看板的时间范围会被静默忽略。新建图表时记得加。
 11. **切换 `AUTH_TYPE` 或升级大版本后必须跑 `superset init`**：认证方式变了，FAB 提供用户页面的视图类也会变（AUTH_DB→`UserDBModelView`，AUTH_OAUTH→`UserOAuthModelView`），加上 Superset 6 新增的 `UserInfoView`，这些新视图的权限条目不会自动创建，表现为**连 Admin 都打不开 Info 页**。`superset init` 才会补建。**但它只授予内置角色（Admin/Alpha/Gamma），自定义角色必须另外补**（`fix_selfservice_perms.py`）。详见第六节 Info/改密码专题。
 12. **排查"点某按钮报无权"，先确认按钮真正请求的 URL**：不要凭页面名猜权限。Superset 6 里 `/user_info/`（导航栏 Info，权限 `can_read@user`）和 `/users/userinfo/`（FAB 旧页，权限 `can_userinfo@UserOAuthModelView`）是两个不同页面——本次就因为按 `userinfo` 过滤路由漏掉了带下划线的 `/user_info/`，导致第一轮只修好了没人点的那个页面。菜单地址在 `superset/views/base.py` 的 `user_info_url`。
@@ -165,6 +165,23 @@ python jump_run.py "$env:TEMP\_cmd.txt" 240 2>&1 | Select-String "DONE|FIX|SKIP|
 
 25. **6.0.1 的图表 API 可见性只认数据集授权，Owner 不算数**：把用户设成图表 Owner + 给 Gamma，`GET /api/v1/chart/<id>` 照样 404——`ChartFilter`（图表 REST API 的 base filter）按"用户对图表底层数据集有无 `datasource_access`"过滤，压根不查 `owners`（看板 API 的 `DashboardAccessFilter` 则认 Owner，两者行为不一致，别互相类推）。**表现**：能在看板里"看到"这张图（走 RBAC 豁免渲染），点编辑却 404/白屏。**对策**：给编辑者发一个含相应数据集 `datasource_access` 的薄数据角色，Owner 只解决"能不能保存"，解决不了"能不能看见"。`grant_dashboard_editor.py` 已把两件事一起做掉。
 
+26. **"筛选器不生效"先分清是没接上还是被行数上限吃掉了**：报"这张图不受左侧时间范围限制"时有两个完全不同的成因，症状一样。① **作用域**：同一看板可能有多个 `filter_time` 筛选器，主筛选器的 `scope.excluded` 把目标图表排除了，实际管它的是另一个同名带后缀的筛选器（本次 `时间范围` vs `时间范围(数据详情)`）。② **行数上限截断**：明细表 `ORDER BY 时间 DESC` + `row_limit`，若数据密度高，取到的行只覆盖所选范围**末尾一小段**——本次每分钟 260~370 行、上限 5000，等于只看得到最新约 13 分钟，无论选多宽的范围显示的都是"今天"，看起来就像筛选被忽略。**判定方法**：直接 `POST /api/v1/chart/data` 带 `result_type=query` 对比带/不带 `time_range` 生成的 WHERE（能证明机制通不通），再看返回数据的 `min/max` 时间跨度（能证明是不是被上限截断）。
+    另外记牢两条机制：**看板传来的 `time_range` 会覆盖图表自带的 `TEMPORAL_RANGE` 值**（`query_context_factory._apply_filters` 遍历所有 `TEMPORAL_RANGE` 过滤器改写 `val`），所以图表里写死一个保守范围是安全的，它只在 Explore 单独打开时兜底，不会挡住看板筛选；**导出 CSV/Excel 走的是同一份合并后的 formData**（`dashboard/.../Chart.jsx` 的 `exportCSV` 用 `getFormDataWithExtraFilters` 的结果），所以下载天然受左侧筛选约束，"下载到全部数据"必定是筛选本身没生效，别去改导出链路。
+
+27. **筛选器"必填"（`enableEmptyFilter`）是看板级连坐，单独开必填等于锁死全看板**：`FilterBar/utils.ts` 的 `checkIsApplyDisabled` 只要发现**任意一个**筛选器 `validateStatus==='error'`（必填且无值）就禁用整条筛选栏的「应用」按钮。给"数据详情"专用的设备号筛选器只开必填，用户不选设备就没法应用其它 Tab 的时间/型号筛选。**必填必须和一个非空的 `defaultDataMask` 成对使用**——有默认值时筛选器一进页面就带值，`validateStatus` 不会是 error，必填只在用户主动清空时才拦人（这正是我们想要的护栏）。2026-07-30 撤回必填、2026-08-20 配默认值后重新开启，见日志 21/22。
+
+28. **在 UI 里给筛选器设默认值可能把 `json_metadata` 写坏，且看不出报错**：生产看板 31 的「设备号(数据详情)」被 UI 存成了 `"defaultDataMask": "B52525000081783"`（**应该是 DataMask 对象**，字符串会让前端取 `dataMask.filterState` 得到 undefined）外加一个 `"requiredFirst": {"nativeEvent": ..., "target": {...}}`（**React 的 checkbox 事件对象被整个序列化进了配置**）。同一次编辑还把 `targets[0].datasetId` 从小快照表改到了 `ads_tb_history`（底表 `dwd_iot_device_pack_minute` 152 亿行），下拉框取值等于在大表上做 `GROUP BY device_sn`。**症状**：看板卡死、再点这个筛选器就报错。**判定**：直接 dump `native_filter_configuration`（`_deploy/_dbg_devfilter.py`），看 `defaultDataMask` 是不是 dict、有没有多出的怪 key。**对策**：这类配置改动走脚本落库（结构可断言、可备份、可回滚），别在 UI 里点；下拉选项一律指向小快照表（`ads_tb_device_latest_geo`，10383 行），筛选器发出的 `device_sn IN (...)` 靠列名同名照样作用于大表图表。
+
+29. **`SELECT COUNT(*) FROM (聚合SQL)` 不能用来估聚合成本**：StarRocks 看到外层只要行数，会把内层 44 个 `MAX(JSON_QUERY(...))` 从执行计划里整个裁掉——本次据此得出"单日 3 秒"，实际带全部聚合列是约 2 分钟/天，导致 90 天回填的时间估错了两个数量级。**对策**：基准测试必须把真实列清单 `SELECT` 出来（哪怕 `LIMIT 50`），或者直接计时一次真实 `INSERT`。
+
+30. **StarRocks 的 `INSERT OVERWRITE` 默认清空整表**：对自动分区表（`PARTITION BY (biz_date)`）不写 `PARTITION` 子句时，必须先 `SET dynamic_overwrite = true`（默认 `false`），否则只想覆盖 2 天却会把 90 天全删了再写 2 天。另外 `INSERT` 用的是 `insert_timeout`（默认 14400s）而不是 `query_timeout`（300s），所以长时间装载不会被 300 秒掐断。**更危险的一条**：`dynamic_overwrite` 写成语句提示 `INSERT /*+ SET_VAR(dynamic_overwrite = true) */ OVERWRITE ...` 时提示被**静默忽略**，行为退回"清空整表"。2026-09-18 在临时表 `_tmp_ds_hint_probe` 上实测：三个日分区里只覆盖一个，结果另外两个分区全没了。**对策**：只用"同一连接先 `SET dynamic_overwrite = true` 再 `INSERT OVERWRITE`"这一种写法；因此调度侧要能在一个会话里跑多条语句（mysql 客户端跑 SQL 文件），而不是只发单条语句的 SQL 任务。顺带一提，`ALTER TABLE ... DROP PARTITIONS WHERE <条件>` 在 4.0.9 上直接抛 `Database.getFullName() because "db" is null`，分区淘汰仍得逐个 `DROP PARTITION`。
+
+31. **`partition_live_number` 在 4.0.9 上 `ALTER` 不报错但也不生效**：`ALTER TABLE ... SET ("partition_live_number"="90")` 返回成功，`SHOW CREATE TABLE` 和 `information_schema.tables_config` 里都查不到该属性，分区不会被自动淘汰。**对策**：保留窗口自己算——从 `information_schema.partitions_meta` 取出早于阈值的分区名逐个 `ALTER TABLE ... DROP PARTITION`（`sync_tb_history_daily.sh` 即如此），别指望这个属性。
+
+32. **`jump_run.py` 的命令里把 `rm -f 脚本` 跟在 `nohup ... &` 后面，会在后台进程启动前把脚本删掉**：本次探测脚本就这样"文件不存在"失败了一次（更隐蔽的是上一次前台运行留下的 `rm` 在我断开后才执行，把重传的脚本删了）。**对策**：清理单独跑一条命令；生产脚本一律 `nohup ... > /tmp/x.log 2>&1 &` 后用另一条命令 tail 日志（跳板会话只等 20~30 秒，长任务必须这么跑）。
+
+33. **被 Ctrl-C 打断的 `ssh` 并不会停掉远端的 `mysql`**：本次中断 90 天回填后，远端客户端仍在逐条执行剩余语句，我又起了两条并行流，结果三条重复装载互相抢资源（用户查询仍是秒级，但 DDL/元数据查询被锁等到 60 秒以上）。**对策**：重启长任务前先 `ps -o pid,etime,args -C mysql` 看有没有还在跑的，必要时按 pid `kill`。
+
 ---
 
 ## 五、常用脚本索引（`_deploy/`）
@@ -173,10 +190,30 @@ python jump_run.py "$env:TEMP\_cmd.txt" 240 2>&1 | Select-String "DONE|FIX|SKIP|
 |---|---|---|
 | `jump_put_fast.py <本地> <生产路径>` | 经跳板传文件到生产，带 sha256 校验 | 看 `REMOTE_SHA_MATCH=True` |
 | `jump_run.py <命令文件> <秒>` | 经跳板在生产执行单条命令 | 命令文件用单引号、ASCII |
+| `fix_detail_device_filter.py {apply\|verify\|revert}` | 卡车电池看板：「设备号(数据详情)」指回小快照表、钉死默认设备、设必填 | 幂等，`--dry-run`/`--sn=`/`--dash=`，改前快照到 `backups/` |
+| `_dbg_devfilter.py [看板id]` | dump 看板的 `native_filter_configuration` 原文 + 各图表 viz/数据集/行数上限 | 只读，排查 UI 存坏的筛选器配置（坑 28） |
+| `_probe_detail_tab_cost.py [设备SN]` | 数据详情 Tab 各查询在"单设备/全设备"下的耗时与行数，含底表规模 | 只读，直连 StarRocks，不走 Superset API |
+| `sr_run.py <本地.sql> [--root] [--tail N]` | 把本地 `.sql` 经开发机（`agi@192.168.41.122`，唯一能直连 StarRocks 的机器）送进共享集群 | 数据层改动的标准通道，比跳板快一个数量级；`--root` 用 `/tmp/.sr_root.cnf`（含 root 口令，600 权限） |
+| `build_history_daily_aggregate.py <模式> <out.sql> [...]` | 生成卡车电池日聚合表的 SQL：`create-table`/`load`/`range`/`backfill`/`compare`/`bench` | 只生成文件不连库；44 个聚合字段与 `ads_tb_history` 同源定义 |
+| `optimize_pb_detail_click_latency.py {apply\|verify\|revert <备份目录>}` | 点击仅联动明细 370（避免 5 路并发）；曲线改跟左侧设备号 | 幂等，`apply` 前自动备份 |
+| `tune_pb_detail_query_defaults.py {apply\|verify\|revert <备份目录>}` | 明细/曲线时间兜底改为 Current day，370 row_limit 降至 5000 | 幂等，`apply` 前自动备份 |
+| `fix_pb_daily_paging_date_align.py {apply\|verify\|revert}` | 卡车电池：384 去翻页全量排序 + 点击同日明细 | 幂等；probe 失败自动回滚 |
+| `fix_pb_detail_crossfilter_emit.py {apply\|verify\|revert <备份目录>}` | 修复 384 点击联动（`emitCrossFilters`）+ 左侧设备号仅作用日聚合 | 幂等，`apply` 前自动备份 |
+| `guard_pb_detail_require_device.py {apply\|verify\|revert <备份目录>}` | 明细无设备号护栏：虚拟数据集 113，370/362–365 改指 | 幂等，`apply` 前自动备份 |
+| `enable_pb_daily_detail_crossfilter.py {apply\|verify\|revert <备份目录>}` | 看板 31：chart 384 点击 device_sn 联动 370/362–365；从原生设备号筛选解耦 | 幂等，`apply` 前自动备份 |
+| `deploy_ds_daily_workflow.py [apply\|verify\|run\|instances\|offline]` | 在生产 DolphinScheduler「数据中台」注册/校验/手动跑/下线日聚合工作流 | 幂等；凭据由调用方提供，不入库；API 走 `10.100.19.1` |
+| `sync_tb_history_daily.sh [天数]` | 覆盖最近 N 天日聚合 + 裁剪 90 天窗口 | 部署在 DolphinScheduler 机 `10.100.21.202:/data/bi-sync/`（属主 `dolphin`），DS 每天调一次、窗口 3 天；`flock` 防并发；`SR_HOST`/`SR_PORT`/`SR_USER`/`SR_PASS`/`BUILDER` 可用环境变量覆盖 |
 | `apply_chart_desc.py` | 批量写图表悬停口径说明（两看板） | 幂等，改文案重跑 |
 | `pb_show_value.py` | PB 所有柱状图开启 show value | 幂等 |
 | `apply_tab_icons.py` | 两看板 Tab 名称加图标 | 幂等 |
 | `pb_pct_unify.py` | PB 的 SOC/SOH 卡片统一百分比显示 | 幂等 |
+| `collect_ads_ops_sr_light.py apply` | （历史）数据中台速览轻量快照 `ads_ops_sr_*` | 已被 Cockpit P0 取代；可停 |
+| `build_dp_sr_overview.py {apply\|verify}` | （历史）表格版「数据中台速览」 | 已被 `build_sr_cockpit.py` 取代 |
+| `collect_starrocks_ops_p0.py apply` | StarRocks Cockpit：DDL + `ads_ops_cockpit_*` 采集（phase1+2：hist增长/7d冷表/Digest一次扫/资产·存算·任务快照） | 需新数据时再跑；主机 crontab 每 15 分钟；看板不直扫 audit |
+| `build_sr_cockpit.py {apply\|verify}` | 建/验「StarRocks Cockpit·数据中台速览」（总览/Query/资产/存算/任务/治理） | 幂等；前缀 `驾驶舱·` |
+| `sync_sr_cockpit_collect.sh` | Cockpit 采集 crontab 包装（flock + 日志） | 装在 `10.100.19.1:/mnt/data/superset/` |
+| `build_run_analysis_tab.py` | 建看板 38「运行分析」Tab：数据集 190–195 + 图表 644–653 + Tab 内筛选器 | 幂等；会重建布局，只想改单图用 `apply_run_analysis_followups.py` |
+| `sync_sr_rg_bindings.py` / `.sh` | 解析 `SHOW RESOURCE GROUPS ALL` 的 classifier 落 `bluetti.ads_sr_global_rg_bindings`，供「用户清单」的资源组列关联 | `10.100.19.1` crontab 每小时第 23 分；滚动保留 3 份快照 |
 | `authz_model.py {baseline\|migrate\|revoke\|retire}` | **授权模型唯一真源**：生成`只读基线`、逐看板建零权限受众角色并挂 RBAC、回收数据授权、退役旧角色；每步带全员可见性零漂移自检与自动回退 | 幂等，支持 `--dry-run`（**注意 dry-run 仍会建空角色**），取代 `ro_role_policy.py`/`groups_setup.py` |
 | `authz_probe.py` | 以每组代表真实走 HTTP 验证新模型：列表/打开/取数/分享/筛选/下钻/中文包 + 负向（建看板、脱离看板取数应 403） | 只读，改授权后必跑 |
 | `patch_editor_ownership.py` | 配置补丁：重写 `raise_for_ownership`，持挂在看板 RBAC 上的`编辑·X`角色 = 该看板及其图表的 Owner（**需重启**，编辑授权页面化的前提） | 幂等，备份 `.bak.editorown`，语法自检失败自动还原 |
@@ -185,6 +222,9 @@ python jump_run.py "$env:TEMP\_cmd.txt" 240 2>&1 | Select-String "DONE|FIX|SKIP|
 | `grant_dashboard_editor.py <看板id> <用户>` | 旧路径（直授+挂 Owner）：进看板制作者组 + 直授`编辑·<看板名>`角色 + 看板/图表/数据集 Owner；适合临时给单人开权限 | 幂等，支持 `--revoke`/`--dry-run` |
 | `_authz_snapshot.py` | 全量授权关系快照（角色→权限、用户/组→角色、看板→RBAC）落 JSON 到主机 `backups/` | 只读，动授权前先跑 |
 | `fix_ds54_guard.py [apply\|revert]` | 生产数据集 54（电池包明细，71 亿行）加"无时间筛选返回空"护栏，防裸查打爆 StarRocks 内存 | 幂等，带备份/回滚与真实用户验证 |
+| `fix_detail_time_filter.py [apply\|verify\|revert]` | 卡车电池看板：把左侧「时间范围」作用域放开到全部图表、删掉重复的「时间范围(数据详情)」、明细表行数上限 5000→50000 并追加"先选设备号"提示 | 幂等，支持 `--dry-run`；改前自动快照 `backups/dash<id>_timefilter_*.json` |
+| `_verify_detail_e2e.py` | 端到端验证明细表：选定设备 + 指定时间范围后，页面取数与 CSV 导出的时间跨度是否真覆盖所选范围 | 只读，用测试客户端注入 admin 登录态 |
+| `_check_filter_scope.py [看板id\|标题片段]` | 巡检看板筛选器作用域：`scope.excluded` 推导值 vs 存的 `chartsInScope`，并提示"同类型筛选器有多个"（"这张图不受筛选限制"的头号成因） | 只读；缓存漂移是无害的，别去逐个修（坑 9） |
 | `_user_reassign.py {inventory\|apply}` | 删用户前把名下全部 DB 引用移交他人（按 `information_schema` 反查所有指向 `ab_user` 的外键；日志置 NULL、成员关系删除、其余改归属，唯一键冲突自动去重） | `apply <src> <dst> [--dry-run]`，src/dst 可用用户 id |
 | `_test_ro_capabilities.py` | 以真实持角色用户跑 15 项能力探针（该能用的能用、该拒的拒）；参数用 ASCII 别名 `pb`/`all` | 只读，改完角色必跑 |
 | `_audit_role_perms2.py` | 打印某角色全部权限并标出非只读项（白名单法，漏不掉） | 只读，做权限漂移巡检 |
@@ -223,6 +263,47 @@ python jump_run.py "$env:TEMP\_cmd.txt" 240 2>&1 | Select-String "DONE|FIX|SKIP|
 
 ## 六、变更日志
 
+### 2026-09-24（Cockpit 资产 Tab 增强）
+
+1. **采集**：`collect_starrocks_ops_p0.py` 新增 `db_overview` / `asset_kpi` / `table_inventory` / `columns` / `sr_users` / `privileges`；`refill_select`（TRUNCATE+INSERT SELECT）；权限不可读时占位行；活跃账号取 audit 近 7 天。
+2. **看板**：`build_sr_cockpit.py` 资产 Tab 增加 KPI/库一览/全量清单/表结构护栏虚拟集/活跃账号/权限；清单→表结构 cross-filter；模型/分区/最近创建保留为次要。
+3. **对象清单**已同步。未部署（由父任务部署）。
+
+### 2026-09-21（卡车电池：384 去翻页 + 点击同日）
+
+1. 生产看板 `pb-device-analysis`：chart 384 开启服务端分页 500 并用 CSS 隐藏翻页；点击发出 `device_day_key=device_sn::biz_date`。
+2. 数据集 113：Jinja `remove_filter=True` 拆键为索引条件；护栏仍要求有设备号或复合键。
+3. 脚本 `_deploy/fix_pb_daily_paging_date_align.py`；备份 `20260921_153322_pb_daily_paging_date_align`；`VERIFY|PASS`。
+
+### 2026-09-21（Cockpit phase1修整 + phase2 Tabs）
+
+1. **phase1 采集修整**（`collect_starrocks_ops_p0.py`）：取消每轮 DROP kpi/digest，仅 `CREATE IF NOT EXISTS`；冷表列迁 `hit_n_7d`（缺失则一次性 DROP 重建）；`table_hist` 追加并剪 48h；增长对 ≤NOW-20h 最近基线；Digest 单次 GROUP BY≤200 后 Python 七维 TOP10；热门表 LIKE 仅 TOP10 / 7d；冷表 >10GB 且 7d 无命中；`query_timeout=35s`。
+2. **phase2 Tabs**：看板 Tab 序 `总览/Query/资产/存算/任务/治理`；新增 `cn_nodes` / `mv` / `task_fail` / `loads` / `table_model` / `part_count` / `recent_table` / `rg_day`；总览去掉「重用户」，冷数据文案改 7d，热门表标题「热门表TOP10(近似)」。
+3. **运维**：`enable_sql_digest=true` 需写入 **fe.conf** 持久化（仅 `ADMIN SET` 会在 FE 重启后丢失）。对象清单已同步。脚本 `build_sr_cockpit.py` 前缀仍 `驾驶舱·`。
+
+### 2026-09-21（Cockpit 强化：双Y / Query下钻 / 治理 / 15min采集）
+
+1. **双 Y 轴**：`驾驶舱·Query量与P95趋势` 改为 `mixed_timeseries`（左 Query Count，右 P50/P95 ms）。
+2. **三 Tab**：总览 / Query（Digest 七维榜 + 慢SQL明细）/ 治理（用户消耗 + 冷表）。
+3. **采集增强**：`ads_ops_cockpit_user_day` / `_cold_table` / `_slow_sql` / `_hot_db`；热门表用大表名 stmt LIKE；KPI 增 cold_bytes / heavy_user。
+4. **定时**：`10.100.19.1` crontab `*/15` → `sync_sr_cockpit_collect.sh`。
+5. **AuditLoader / Digest**：探查确认历史 `digest` 全空；已执行 `ADMIN SET FRONTEND CONFIG ("enable_sql_digest"="true")`（当前为 true）。**FE 重启后可能丢失**，需运维写入 `fe.conf` 持久化。`QueriedRelations` 仍空，热门表继续 stmt LIKE。看板 `VERIFY|PASS`（31 图）。
+
+### 2026-09-21（数据中台速览 → StarRocks Cockpit P0，生产）
+
+1. **按设计方案** `project/数据中台情况速览/starrocks_superset_dashboard_design.md` **§24 首页 18 图**落地 P0：看板 37 升级为「StarRocks Cockpit·数据中台速览」（slug 仍 `dp-sr-overview`），图表前缀 `驾驶舱·`，共 20 张（KPI×8 + 趋势/榜单 + 当前查询/失败 SQL）；`VERIFY|PASS`。
+2. **快照层** `bluetti.ads_ops_cockpit_*`（无 `CREATE DATABASE` 权限，未建 `starrocks_ops`）。采集 `_deploy/collect_starrocks_ops_p0.py`；建板 `_deploy/build_sr_cockpit.py`。
+3. **现网差异**：`audit.digest` / `QueriedRelations` 全空 → soft-digest + 热度按 `audit.db`；Compaction 列名为 `MAX_CS`；Cache 用 `fe_metrics`/`be_metrics` 追加时序。
+4. **对象清单**已更新。P1/P2 下钻页未做。RBAC 角色/组不变。
+
+### 2026-09-21（数据中台速览，生产 · 初版表格看板）
+
+1. **新建看板「数据中台速览」**（slug `dp-sr-overview`，生产 id=37）：六 Tab（总览/集群/审计/用户/仓库/MV），14 张表图；`refresh_frequency=0`；角色 `看板·数据中台速览`。
+2. **轻量快照层** `bluetti.ads_ops_sr_*`：采集脚本 `_deploy/collect_ads_ops_sr_light.py`（`query_timeout=25s`，审计仅近 24h 聚合/TOP，库存只扫 bluetti，**不做 Paimon 探活**）。看板不直扫 `audit_db`。
+3. **对象清单**：根目录 `数据中台速览-对象清单.md`。建看板脚本：`_deploy/build_dp_sr_overview.py`。
+4. **授权**：`authz_model.py migrate` 已覆盖看板 37；组「数据中台速览观众」=`只读基线`+`看板·数据中台速览`（空组，在 Security ▸ Groups 加人）。`information_schema.user_privileges` 对 `agi` 当前 0 行，权限 Tab 可能为空。
+5. **注意**：刷新数据时手动再跑 collect，勿高频。
+
 ### 2026-07-28（本次，元数据 B 类，开发+生产均已应用）
 
 均为 Superset 元数据改动，走第三节双跑法；数据层未动。
@@ -255,6 +336,19 @@ python jump_run.py "$env:TEMP\_cmd.txt" 240 2>&1 | Select-String "DONE|FIX|SKIP|
 19. **编辑授权页面化**（2026-07-29，`patch_editor_ownership.py` + `editor_group_setup.py`，两环境已打补丁并重启；编辑组暂只建了开发的「VOC项目看板编辑」）：把日志 18 的脚本式编辑授权升级为"往组里加人即可"。做法：在 `CustomSsoSecurityManager` 重写 `raise_for_ownership()`——用户持有的`编辑·X`角色若挂在目标看板的 RBAC 上，则对该看板及其全部图表视同 Owner（判定异常一律回落拒绝）。每看板一次性跑 `editor_group_setup.py` 建角色/挂 RBAC/建「<看板名>编辑」组，日常在 `Security ▸ List Groups` 加人/移人。开发以零角色零 Owner 的探针用户验证：入组即可改本看板图表（200）、跨看板 404、观众 403；郭特已从直授迁入组。配置备份两环境 `superset_config.py.bak.editorown`。详见第六节授权模型专题"编辑授权"小节。
 
 20. **修复旧浏览器打开带 Tab 看板报「意外错误 TypeError: (intermediate value).difference is not a function」**（2026-07-29，`head_custom_extra.html` 追加 Set polyfill，两环境已重启生效）：张华在开发环境打开看板 32 时报此错。根因：Superset 6 前端在看板 Tab 切换的 reducer 里直接调用 **ES2025 原生 Set 方法**（产物 `3397.*.entry.js`：`new Set(e.activeTabs).difference(...)`、`.union(...)`），Chrome/Edge<122、Firefox<127、Safari<17 没有这些方法，一切 Tab 即抛 TypeError（服务端无任何报错，logs 表只见正常取数——**这类"意外错误"弹窗都是前端 JS 异常，排查方向是浏览器兼容性/前端产物，不是后端**）。修法：在 `head_custom_extra.html`（`<head>` 内、早于应用 bundle 执行）补 7 个 Set 方法的 polyfill，新浏览器原样跳过；用 Node 在构建机模拟旧浏览器全 PASS（`_test_set_polyfill.js`），两环境重启后以 admin 实测渲染页均含 polyfill 且原有注入完好。备份：开发 `head_custom_extra.html.bak.setpoly`、生产同名（`/mnt/data/superset/custom_templates/`）。也可让用户直接升级浏览器，但 polyfill 对所有旧浏览器用户一次解决。
+
+21. **修复「设备数据明细」不受左侧时间范围限制、且下载像是全量**（2026-07-30，`fix_detail_time_filter.py`，开发看板 32 + 生产看板 31 均已应用并验证，**不需重启**）：两个成因叠在一起（详见坑 26）。① 看板有两个 `filter_time` 筛选器，左侧主「时间范围」的 `scope.excluded` 把数据详情 Tab 的 6 张图（开发 752~757 / 生产 361~366）全排除了，真正管它们的是另一个「时间范围(数据详情)」——用户拖主筛选器自然毫无反应。② 明细表 `ORDER BY event_time DESC` + `row_limit=5000`，而 `ads_tb_history` 全设备每分钟 260~370 行，5000 行只覆盖最新约 13 分钟，所以即使筛选生效，显示的永远是所选范围最末那十几分钟（默认范围到今天 → 永远是 7-30）。
+    **改动**：主「时间范围」`excluded` 清空并同步 `chartsInScope`（管全看板 38 张图）；删掉重复的「时间范围(数据详情)」；明细表 `row_limit` 5000→50000（单设备约 1 行/分钟，50000 行≈34 天，时间范围才真实可见）；明细表 `description` 追加提示"请先在左侧选择设备号再选时间范围"。**图表自带的写死"最近 7 天"故意不动**：看板传来的 `time_range` 会覆盖它（坑 26），留着正好给 Explore 单独打开时兜底。
+    **中途撤回的一步（重要）**：本想把「设备号(数据详情)」设成必填（`controlValues.enableEmptyFilter=true`）来强制先选设备，**实施后立即回退**——`enableEmptyFilter` 的校验是**看板级**的：`FilterBar/utils.ts` 的 `checkIsApplyDisabled` 只要发现**任意一个**筛选器 `validateStatus==='error'` 就禁用整条筛选栏的「应用」按钮，于是"详情 Tab 没选设备"会把其它 4 个 Tab 的时间/型号/省份筛选一起锁死。**结论：必填只适合"整个看板都围绕这个筛选器"的场景，给某个 Tab 专用的筛选器设必填会连坐全看板**。改用图表说明提示代替。
+    **下载不是独立问题**，无需任何改动：看板里导出用的就是合并了看板筛选的 formData，实测导出与页面结果逐行一致。
+    **验证**（两环境输出完全相同）：不选设备 → 50000 行仅 1 天（所以要有提示文案）；选 1 台设备 + 最近 30 天 → 28156 行跨 31 天（06-30~07-30）；选 1 台设备 + 7-01~7-10 → 8033 行跨 9 天；同条件 CSV 导出 → 8033 行、跨度一致。快照 `backups/dash32_timefilter_*.json` / `dash31_timefilter_*.json`，`fix_detail_time_filter.py revert` 可回滚（会一并还原 `description`）。**用户侧需硬刷新一次**（浏览器缓存着旧的筛选器配置）。
+    **未做**：`ALLOW_FULL_CSV_EXPORT` 仍关闭。开了会多一个"导出完整 CSV"菜单（同样受筛选约束，行数上限走 `SQL_MAX_ROW=100000`）；当前导出上限已是图表的 50000 行，够用就没引入这个重启动作。
+
+22. **修复「设备号(数据详情)」配置损坏：钉死默认设备 + 开必填**（2026-08-20，`fix_detail_device_filter.py`，开发看板 32 + 生产看板 31 均已应用并验证，**不需重启**）：现象是打开看板卡死、动这个筛选器就报错。dump 生产 `native_filter_configuration` 后发现该筛选器被 UI 存坏了（详见坑 28）：`defaultDataMask` 是字符串 `"B52525000081783"` 而非 DataMask 对象、多了一个装着 React checkbox 事件的 `requiredFirst`、`targets[0].datasetId` 还从小快照表 `ads_tb_device_latest_geo`(102) 被改到了 `ads_tb_history`(104)——于是下拉框取值要在 152 亿行的 `dwd_iot_device_pack_minute` 上 `GROUP BY device_sn`（实测 3.8s，且每次开看板都跑）。开发环境同一筛选器没被动过（仍指向 75，不必填、无默认值）。
+    **改动**（两环境同一份配置）：`targets` 指回小快照表（10383 行，`DISTINCT` 0.0s，device_sn 值域与大表一致）；`defaultDataMask` 写成合规对象，钉死 `device_sn IN ['B52525000081783']`；`enableEmptyFilter=true`（必填）、`defaultToFirstItem=false`（"取第一条"要额外查一次且结果不可复现）；删掉垃圾 `requiredFirst`；同步 `chartsInScope`（开发 753~757 / 生产 362~366）。**必填这次能开，是因为配了默认值**——进页面就带值，`validateStatus` 不会是 error，不会连坐锁住其它 Tab 的「应用」按钮（坑 27），只有用户主动清空设备时才拦，这正是防全量扫描的护栏。
+    **数据层实测**（`_probe_detail_tab_cost.py`，7 天窗口）：单设备明细 0.1s/3378 行、单设备 SOC 曲线 0.1s；全设备明细 0.5s、全设备曲线 0.3s；`ads_tb_history` 视图 7 天 364 万行、总量 3092 万行，底表 152 亿行。**结论**：详情 Tab 各图自带"最近 7 天"兜底（坑 26），在默认窗口下即使不选设备也不至于卡死；真正会打爆的是把左侧时间范围拉宽/清空后全设备扫大表，以及上面那个大表下拉框。钉死默认设备把两条路都堵上了。
+    **验证**：`fix_detail_device_filter.py verify` 两环境均 `VERIFY|PASS`（目标数据集、5 项 controlValues、defaultDataMask 逐字段比对、无垃圾 key）；应用前断言 `B52525000081783` 确实在快照表里（`SN_CHECK|rows_in_snapshot=1`），设备不存在会直接 ABORT，不会钉一个死默认值。快照 `backups/dash32_devfilter_*.json` / `dash31_devfilter_*.json`，`fix_detail_device_filter.py revert` 可回滚。**用户侧需硬刷新一次**（浏览器缓存着旧的筛选器配置）。
+    **换默认设备**：`./venv/bin/python fix_detail_device_filter.py apply --sn=<新SN>`，脚本会先校验该 SN 在快照表中存在。
 
 #### 专题：看板时间范围筛选器"不起作用"（2026-07-28）
 
@@ -603,7 +697,38 @@ session["locale"] = self.babel_default_locale   # ← 把默认值“落盘”�
 - **需重启**。用户侧只需刷新页面（必要时 Ctrl+F5），下一个请求就会被自动纠正，无需重新登录。
 - 顺带确认：生产 `SESSION_TYPE="redis"` + `Session(app)`，是**服务端会话**；另一条路是直接清 Redis 里的 session key，但那会强制所有人重新登录，不如钩子温和。生产还有 `SESSION_COOKIE_SECURE = True`，所以本机 http 探针拿不到会话，验证要走 app context（见坑位表）。
 
+**追加坑（时间筛选中文显示成「货币」「运行查询」，2026-10-12）**：上游 zh `.po` 里 `Current day/week/...`、`Last day/...` 等是 `#, fuzzy` 的机器乱猜译文，而生成语言包用了 `--fuzzy`/`-f`，所以错译直接上屏。fork 提交 `e0636da4` 把正确译文**追加到文件末尾**而不是改原条目，导致同一 msgid 出现两次，po2json/pybabel 取**第一条**（错的），修正不生效。**对策**：改译文一律就地改原条目并去掉 `fuzzy`，不要追加。fork 提交 `d3af4182` 已合并 40 条重复项并补 `Start (inclusive)`/`End (exclusive)`。只换 zh 三件套的流程：构建机 `_gen_zh_langpack.sh` 生成 json → `_install_zh_lang.sh <venv> <dir>`（自动备份到 `LC_MESSAGES/backup_<时间戳>/`、编译 `.mo`）→ 重启。检查脚本 `_audit_zh_datefilter.py`（本地查重复/fuzzy）、`_verify_zh_datefilter_served.sh`（测试机）、`_verify_zh_datefilter_prod.py`（生产，ASCII 输出）。测试 + 生产均已应用，sha256：json `e76bf4c1…`、po `5e917e82…`。
+
 ### 历史变更
+- 2026-10-13 生产看板 38「数据中台速览」新增「运行分析」Tab（`TAB-525bfeeea0`）：数据集 190–195（`v_run_audit` / `v_run_current_queries` / `v_run_loads` / `v_run_mv_status` / `v_run_task_fail` / `v_show_users_rg`），图表 644–653（任务量趋势（按类型）、平均耗时趋势、总耗时趋势（按类型）、执行耗时/CPU 消耗/内存消耗 TOP100、当前运行任务、物化视图刷新状态、数据导入任务、调度任务失败记录），Tab 内 5 个筛选器（时间范围默认近 1 天上限 7 天、时间粒度默认小时、任务类型、用户、资源组）。任务按 `stmt` 首词归类（`SELECT`/`INSERT`/`UPDATE`/…）。平均耗时**单位是毫秒**：实测每小时均值 104–167ms，取整到秒会全是 0。「用户清单」(chart 556) 增加 `资源组` 列，取**配置绑定**（`SHOW RESOURCE GROUPS ALL` 的 classifier），不是审计日志里实际跑过的组；没有 classifier 的用户（`root`/`dashboard`/`ro_geo`）显示 `-`，实际落 `default_wg`。脚本：`_deploy/build_run_analysis_tab.py`、`_deploy/apply_run_analysis_followups.py`；备份 `/mnt/data/superset/backups/dp-sr-global_20261012_212041_run_analysis.json`。
+- 2026-10-13 `SHOW RESOURCE GROUPS ALL` 不能在 SQL 里 join，所以新增 `10.100.19.1` crontab **每小时第 23 分** 跑 `sync_sr_rg_bindings.sh`，把 classifier 解析进 `bluetti.ads_sr_global_rg_bindings` 供「用户清单」关联。写新 `snapshot_ts` 再删旧的（保留最近 3 份），读侧取 `MAX(snapshot_ts)`，避免 TRUNCATE 期间读到空表。注意这张表原先只有 `sync_sr_global_collect.py` 手工跑时才更新，而那个脚本**从未接入任何调度**（本来是给 DolphinScheduler 准备的），数据从 2026-09-29 一直停到现在。脚本：`_deploy/sync_sr_rg_bindings.py` / `.sh`。
+- 2026-10-13 StarRocks 小于一天的时间粒度（秒/分/小时）全部改走 `DATE_TRUNC`，测试与生产 `superset_config.py` 均已加 `TIME_GRAIN_ADDON_EXPRESSIONS`。根因：StarRocks 引擎继承 MySQL 的 `DATE_ADD(DATE({col}), INTERVAL HOUR({col}) HOUR)`，而 Superset 执行前会用 sqlglot 重写语句并把外层 `DATE()` 吃掉，截断就变成了偏移——按小时分组会退化成按原始时间戳分组（实测 215 行变 10000 行）。`DATE_TRUNC` 过重写不变形。改完 `kill -HUP` gunicorn 主进程即可生效。测试机备份 `backups/superset_config.py.20261013_085437`。
+- 2026-10-12 测试机 41.122 换装 master（`3569ffc`）构建的前端 + master 版 `models.py`，上线「看板时间筛选器·限制可选时间范围」与「命令数据集排序」；核对脚本 22 项全过。构建脚本 `_build_frontend_master.sh`（约 6 分钟），部署脚本 `_deploy_master_to_test.sh`；回滚：`static/assets_prev_20261012145536` 换回 `assets`、`connectors/sqla/models.py.bak_20261012145536` 换回，重启。生产待验证后再发。
+- 2026-10-12 fork 分支统一：GitHub `250715122/superset` 只保留 `master`（`3569ffc7`），原 `test-6.0-changes` 的插件提交（自研 ECharts 插件 + GeoMaps）与 ops 脚本提交已摘入 master，ops 里的 JumpServer 账号密码改为读环境变量 `JUMP_USER`/`JUMP_PASSWORD`，含明文密码的 `test-6.0-changes` 已从 GitHub 删除（旧提交按 SHA 仍可访问，需改密码）。构建机 `/opt/superset-build` 已切到 `master` 并跟踪 `origin/master`，切换前本地改动备份在 `~/superset-build-backup/20261012143933/`；`test-venv/`、`superset_config_test.py` 写进 `.git/info/exclude`。核对结论：插件/地图/翻译/后端 6 个文件三边一致；`models.py` 生产=master（差 3 个空行），测试机缺「命令数据集排序」；前端「限制可选时间范围」只在 master，测试/生产均未发布。核对脚本 `_make_expected_master.py` + `_verify_deployed_vs_master.py`。
+- 2026-10-12 修正 zh 时间筛选译文（Current/Last/previous calendar 等），测试 41.122 与生产均已替换 zh `messages.po/json/mo` 并重启；备份 `translations/zh/LC_MESSAGES/backup_20261012112704`（测试）、`backup_20261012113227`（生产）。fork 提交 `d3af4182`。
+- 2026-09-24 Cockpit 资产 Tab 增强：`db_overview`/`asset_kpi`/`table_inventory`/`columns`/`sr_users`/`privileges` + 虚拟护栏 `columns_guard`；清单→表结构 cross-filter；权限不可读时占位。脚本 `collect_starrocks_ops_p0.py` / `build_sr_cockpit.py`。见「数据中台速览-对象清单.md」。
+- 2026-09-22 Email 打标展示微调：`tags_history` 去掉时间只保留标签；工单明细新增 `replies_history`；轮次明细新增本轮 `customer_message`/`reply_body`（anchor 留言 + 轮次后非公开评论，末轮回落 ticket.reply_body）。脚本同 `_deploy/add_email_tag_round_history.py`。
+- 2026-09-22 生产看板 29「数据明细」：Email 多轮打标历史可见。chart 292 `Email工单明细` 改挂新逻辑视图 `dws_cs_email_ticket_history_detail`（数据集 151），新增列 `tag_round_count`、`tags_history`；原物化对象 `dws_cs_email_ticket_detail` 未改。新增 chart 493 `Email打标轮次明细`（数据集 152 / `dws_cs_email_ticket_tag_round_detail`，一行一轮）。源表 `email_ticket_tag_round` 已在 Paimon；验收 139,309 工单、180 个多轮、最多 6 轮。接入时间范围/站点/明细日期。脚本：`_deploy/add_email_tag_round_history.py`；备份：`/mnt/data/superset/backups/20260922_105124_email_tag_round_history/before.json`；变更前保护快照：`.../manual_dashboard_baselines/cs-bi-overview/20260922_104651.*`。
+- 2026-09-21 Cockpit phase1修整+phase2 Tabs：去每轮 DROP、hist≥20h 增长、冷表7d、Digest一次扫、六 Tab（资产/存算/任务）；fe.conf 需持久化 `enable_sql_digest`。脚本 `collect_starrocks_ops_p0.py` / `build_sr_cockpit.py`。
+- 2026-09-21 Cockpit 强化：双 Y 轴、Query/治理 Tab、User+冷表、15min crontab；`VERIFY|PASS`（31 图）。脚本 `collect_starrocks_ops_p0.py` / `build_sr_cockpit.py` / `sync_sr_cockpit_collect.sh`。
+- 2026-09-21 生产看板 37 按设计方案升级为「StarRocks Cockpit·数据中台速览」P0（§24 首页）：`ads_ops_cockpit_*` + `collect_starrocks_ops_p0.py` / `build_sr_cockpit.py`；`VERIFY|PASS`。见「数据中台速览-对象清单.md」。
+- 2026-09-20 审计 `audit_db.audit` 确认：点击联动 SQL **已带当天 event_time**（非无时间路径），scanRows≈107；但一次点击并发打 370+四条曲线，单条 queryTime 17–25s（cpuCostNs 极高），实验室 5 路并行约 8–9s、单路约 3s。优化：cross-filter 接收方改为仅 370；曲线 362–365 改回跟随左侧设备号。备份：`/mnt/data/superset/backups/20260920_100827_pb_detail_click_latency`。脚本：`_deploy/optimize_pb_detail_click_latency.py`。
+- 2026-09-20 排查明细联动慢：设备号+当天在 `ads_tb_history`（底层 Paimon 日分区约 1800 万行 + `PARSE_JSON`/46 列投影）单次约 2.7–3.5s，属存储/视图成本而非缺筛选；点击会同时刷新 370+四条曲线。将 370/362–365 图表自带时间兜底从「近 7 天」改为 `Current day`，370 `row_limit` 50000→5000。备份：`/mnt/data/superset/backups/*_pb_detail_query_defaults`。脚本：`_deploy/tune_pb_detail_query_defaults.py`。
+- 2026-09-19 生产看板 31「数据详情」修复 384→370 点击联动：根因是 Superset 6 表格需 `emitCrossFilters=true` 才会 `setDataMask`，此前仅写了 `chart_configuration` 未开发射；顺带把左侧「设备号(数据详情)」加回仅作用于日聚合 chart 384（明细/曲线仍解耦，避免与点击 AND 空结果），修正 chart 370 节点过期 `parents`，并把 384 残留 `event_time` adhoc 改为 `biz_date`。备份：`/mnt/data/superset/backups/20260919_181813_pb_detail_crossfilter_emit`。脚本：`_deploy/fix_pb_detail_crossfilter_emit.py`。
+- 2026-09-19 生产看板 31「数据详情」明细无设备号护栏：新建虚拟数据集 113 `ads_tb_history_by_device`（无 `filter_values('device_sn')` 则 `AND 1=0`），chart 370/362–365 改指 113；未点日聚合设备号时 0 行约 0.2s，点击联动带设备号后正常出数。备份：`/mnt/data/superset/backups/20260919_074638_pb_detail_device_guard`。脚本：`_deploy/guard_pb_detail_require_device.py`。
+- 2026-09-19 生产看板 31「数据详情」：chart 384 点击 `device_sn` 单元格通过 cross-filter 联动 chart 370 与历史曲线 362–365；接收图已从原生「设备号(数据详情)」解耦（该筛选现无作用图且取消必填），避免与默认设备 AND 出空结果；顺带把「时间范围(数据详情)」作用域恢复为含 361/362–365/370/384。备份：`/mnt/data/superset/backups/20260919_072313_pb_daily_detail_crossfilter`。脚本：`_deploy/enable_pb_daily_detail_crossfilter.py`。
+- 2026-09-18 生产看板 31 chart 384「设备数据日聚合(按设备/日期)」改为读预聚合物理表 `bluetti.ads_tb_history_daily`（46 列，按 `biz_date` 自动分区、`device_sn` 8 分桶），排序/翻页从 46~77 秒降到 0.26~0.38 秒。**选型有实测依据**：按天分区物化视图能穿透 `UNION ALL` 推导出 Paimon `pt` 分区，但单分区刷新 6 分钟未完成、且首次异步刷新会从最老分区起串行刷满 91 个分区；而带 `pt` 谓词直接写物理表约 2 分钟/天。写入用 `SET dynamic_overwrite = true` + 无 `PARTITION` 子句的 `INSERT OVERWRITE`，只覆盖命中日分区（**不设这个变量会清空全表**）。口径核对：2026-09-17 全天 3,362 个设备×日组合、44 列逐值与 `ads_tb_history` 的 `MAX` 一致，差异 0。新增生产数据集 112（显式建列、`main_dttm_col=biz_date`）；chart 384 仅改数据源、`groupby`、`order_by_cols` 并去掉时间粒度，44 个 `MAX` 指标与筛选器作用域原样保留。增量刷新交给生产 DolphinScheduler 3.4.1（`10.100.21.202:12345`，standalone，服务用户 `dolphin`）项目「数据中台」工作流 `ads_tb_history_daily`（每天 02:00 跑一次 Shell 任务 `bash /data/bi-sync/sync_tb_history_daily.sh 3`，窗口 3 天吸收迟到数据，单天约 3 分钟）；脚本和 SQL 生成器装在该机 `/data/bi-sync/`，属主 `dolphin`。开发机 `192.168.41.122` 上临时加过的 crontab 已 `crontab -r` 撤除。回滚：`repoint_pb_daily_aggregate.py revert /mnt/data/superset/backups/20260918_154855_pb_daily_aggregate_repoint`。脚本：`_deploy/build_history_daily_aggregate.py`、`_deploy/repoint_pb_daily_aggregate.py`、`_deploy/sync_tb_history_daily.sh`、`_deploy/sr_run.py`。
+- 2026-09-17 生产看板 31「卡车电池设备分析」的「数据详情」Tab 在原明细 chart 370 上方新增 chart 384「设备数据日聚合(按设备/日期)」：按 `device_sn + DATE(event_time)` 聚合，当前明细其余 44 个字段全部取 `MAX`。筛选器仅纳入「时间范围(数据详情)」，显式排除全局时间、设备型号、省份和设备号筛选器。QueryContext、生成 SQL 日粒度、布局顺序和筛选作用域均验证通过。脚本：`_deploy/add_pb_detail_daily_aggregate.py`；备份：`/mnt/data/superset/backups/20260917_181340_pb_detail_daily_aggregate/`。
+- 2026-09-17 生产看板 29 新增「产品与导购」Tab（chart 375–383、数据集 108–110）：统一 Chat 有效会话关联产品与 Email `product_models` 提取型号，提供产品关联案例/覆盖率/型号数/命中次数 KPI、跨渠道 TOP20、历史趋势、站点分布、服务结果及未归一型号。新增 `dws_cs_product_model_case` 物化视图、`ads_cs_product_model_daily` / `ads_cs_product_coverage_daily` 普通视图；Email 按 `products.name/alias` 归一。`chat_session_products` 因无主键被主 CDC 排除，改由测试 Flink 同步机 `/home/agi/bi-sync/sync_chat_product_bridge_snapshot.sh` 每小时第 17 分全量去重对账至 `ods_cs_chat_session_products`，初始 19,010 行；未占用或重启现有 Flink 作业。生产元数据备份：`/mnt/data/superset/backups/20260917_165446_product_model_analysis/before.json`。脚本：`_deploy/sync_chat_product_bridge_snapshot.sh`、`_deploy/build_product_model_views.py`、`_deploy/add_product_model_analysis.py`、`_deploy/_probe_product_model_analysis.py`。
+- 2026-09-17 生产看板 29「数据明细」chart 326 `Chat对话明细` 新增 `user_id`：最终口径为实际用户消息发送者关联的 `chat_user.user_id`（Zendesk/Sunshine 用户标识），不是内部 `chat_message.sender_id`，也不使用可能指向 business 用户的 `chat_session.chat_user_id`。近 7 天用户消息外部 ID 覆盖率 100%；明细 4,746 行反查 `chat_user` 未匹配数为 0。仅首次增加展示列时修改 chart 326；口径纠正只更新视图取值和数据集字段类型，保护审计最终 `clean=1`。脚本：`_deploy/add_chat_detail_user_id.py`、`_deploy/fix_chat_detail_zendesk_user_id.py`；纠正前备份：`/mnt/data/superset/backups/20260917_162009_fix_zendesk_user_id/`。
+- 2026-09-17 已将生产看板 29「全球AI客服·运营分析」当前人工编辑状态固化为保护基线：完整保存布局、原生筛选器、CSS、54 张图的参数/数据源/描述等，并同时导出 Superset assets ZIP。基线指纹 `afaf3445c23f94a165d110eb6ad89ec3d202d9f073e4e5ea3db5fa380e9aa37e`，首次差异检查 `clean=1`。快照：`/mnt/data/superset/backups/manual_dashboard_baselines/cs-bi-overview/20260917_154937.json` 和 `20260917_154937_assets.zip`；工具：`_deploy/protect_manual_dashboard_edits.py`（`snapshot/diff/restore --confirm`）。项目规则要求后续修改前快照、仅补丁式改目标字段、修改后审计差异，禁止整板导入或重建覆盖人工配置。
+- 2026-09-17 卡车电池 history 数据层完成单表化：对账近 1 天设备/时间键 518,647 个且双向缺失为 0；旧分钟宽表多出的 281 行为重复键残留。`bluetti.ads_tb_history` 现仅直读 `dwd_iot_data_raw_ops`，CTE 对 `inv`、`pack` 各 `PARSE_JSON` 一次，保留旧 19 个基础字段并合并 v2 扩展字段，共 59 列。生产 chart 370 已从数据集 105 并入 104，数据集 105 与视图 `ads_tb_history_v2` 已删除；QueryContext 同时查询旧曲线字段、明细字段及 NTC1/NTC10 成功。脚本：`_deploy/unify_tb_history_view.py`、`_deploy/finalize_tb_history_unification.py`；备份：`/mnt/data/superset/backups/history_unify_20260917_125414/`。
+- 2026-09-17 共享视图 `bluetti.ads_tb_history_v2` 完成 JSON CTE 优化：由每个字段分别解析 `pack` 改为 CTE 中一次 `PARSE_JSON`、外层统一 `JSON_QUERY` 提取；全部输出逐值一致，设备号/时间谓词可下推，生产看板 31 chart 370 QueryContext 验证成功。脚本：`_deploy/optimize_history_v2_json_cte.py`（`apply/verify/revert`）；备份：`/mnt/data/superset/backups/history_v2_json_cte_20260917_122020/before.sql`。
+- 2026-09-16 生产看板 31「卡车电池设备分析」chart 370「设备数据明细(按设备/时间调取)」将 `NTC1_NTC2`、`NTC3_NTC4`、`NTC5_NTC6`、`NTC7_NTC8`、`NTC9_NTC10` 全部替换为十进制 `NTC1` 至 `NTC10`。共享视图 `ads_tb_history_v2` 保留 5 个原组合字段并新增高/低字节拆分列；生产数据集 105 已刷新，开发 Superset 元数据按要求未同步。脚本：`_deploy/add_ntc_detail_columns.py`（`apply/verify/revert`）；完整拆分前备份：`/mnt/data/superset/backups/ntc_split_20260916_144042/before.json`。
+- 2026-09-16 生产看板 29「体验与回访」新增 chart 374 `Chat回复超过120秒会话趋势`：默认按日同时展示严格 `resp_sec > 120` 的会话数及这些超时会话的加权平均回复时间。新增每小时异步刷新物化视图 `ads_cs_chat_response_timeout_daily`、生产数据集 106；图表接入「明细日期」「时间粒度」，其它筛选作用域跟随现有 Chat 首响趋势。脚本：`_deploy/add_chat_over_120s_trend.py`（apply/verify）；生产备份：`/mnt/data/superset/backups/20260916_155516_chat_over_120s_trend/before.json`；两段日期范围真实查询验证通过。
+- 2026-09-16 生产看板 29「数据明细」chart 326 `Chat对话明细` 新增 `reply_duration_seconds`（显示名「回复耗时(秒)」）：按每轮用户提问到第一条实际 AI/business 回复计算，无实际回复为空；排除中/日文“用户结束会话”系统通知。新增逻辑视图 `dws_cs_chat_message_reply_detail` 和生产数据集 107，chart 326 已改指新数据集。脚本：`_deploy/add_chat_reply_duration_detail.py`（apply/verify）；最终修正前备份：`/mnt/data/superset/backups/20260916_163850_chat_reply_duration_detail/before.json`；验证通过（68,865 轮、62,577 轮有回复耗时）。
+- 2026-09-16 生产看板 29「体验与回访」口径标识与日期联动修正：确认 6 张图均为 Chat 数据源，将标题统一改为 `Chat平均首响(秒)`、`Chat 10秒内首响率`、`Chat回访用户占比`、`Chat首响时延趋势(秒)`、`Chat新客vs回访趋势`、`Chat各站点首响明细`；左侧「明细日期」由仅覆盖图 293 扩展为覆盖全部 6 图。脚本 `_deploy/fix_experience_chat_scope.py` 支持 apply/verify/revert；生产备份 `/mnt/data/superset/backups/experience_chat_scope_20260916_142521.json`。两段不同日期范围真实查询均通过。
+- 2026-09-11 生产看板 29「全球AI客服·运营分析」的「Chat在线对话」新增 3 图：`用户会话数(周期)`、`每会话消息数趋势(平均/最大)`、`平均每用户会话数趋势`。两张趋势图固定按自然月（`P1M`）展示；接入全局「时间范围」「站点」，排除时间粒度、标签分类、明细日期及周报专用筛选器。12:11 将 `用户会话数(周期)` 改为与 `用户消息数` 完全相同的 `big_number`、时间轴、默认日粒度、趋势展示和筛选作用域，避免“周期合计”和“最后时间桶”混比。部署脚本：`_deploy/add_chat_session_metrics.py`；修正脚本：`_deploy/fix_chat_session_kpi_period.py`；验证脚本：`_deploy/_probe_chat_session_metrics.py`。生产修正前备份位于 `/mnt/data/superset/backups/20260911_121119_chat_session_kpi_period/`。
 - 2026-07-27 生产发布（两看板首次上线生产）+ 数据对象命名统一：见《卡车电池设备分析-数据对象清单.md》五节、《全球AI客服·运营分析_指标计算口径说明.md》两条 2026-07-27 附录。
 - 2026-07-20 客服口径统一 + 生产同步：见《全球AI客服·运营分析_指标计算口径说明.md》2026-07-20 附录。
 - SSO + 本地双登录、Casdoor 配置、Redis 服务端会话、权限下拉宽度修复：见 `_deploy/superset_config_dev_sso.py`、`login_dual.html`、`head_custom_extra.html`。
@@ -616,7 +741,7 @@ session["locale"] = self.babel_default_locale   # ← 把默认值“落盘”�
 
 | 项 | 开发（192.168.41.122） | 生产（10.100.19.1） |
 |---|---|---|
-| 卡车电池设备分析 | 看板 id **32**，38 图，5 Tab | 看板 id **31**，38 图，5 Tab |
+| 卡车电池设备分析 | 看板 id **32**，38 图，5 Tab | 看板 id **31**，39 图，5 Tab |
 | 全球AI客服·运营分析 | 看板 id **15**，50 图 | 看板 id **29**，51 图（多 1 张同名历史图） |
 | 界面语言 | 默认 `zh`，21 语种包已装，切换正常 | 同左 |
 | 会话 | Redis 服务端会话 | Redis 服务端会话 + `SESSION_COOKIE_SECURE=True` |

@@ -143,6 +143,29 @@ sudo systemctl restart superset
 
 ---
 
+## 数据中台速览（看板 38）
+
+| 脚本 | 用途 |
+|---|---|
+| `build_run_analysis_tab.py` | 建「运行分析」Tab：数据集 190–195、图表 644–653、Tab 内 5 个筛选器。幂等，但**会重建布局**，只改单张图请另写补丁脚本 |
+| `apply_run_analysis_followups.py` | 定点补丁：平均耗时改毫秒、「用户清单」资源组列改走配置绑定 |
+| `sync_sr_rg_bindings.py` / `.sh` | 把 `SHOW RESOURCE GROUPS ALL` 的 classifier 解析落 `bluetti.ads_sr_global_rg_bindings`（`SHOW` 不能 join，只能先落表）。生产 crontab 每小时第 23 分；写新 `snapshot_ts` 再删旧的，滚动留 3 份，读侧取 `MAX(snapshot_ts)` |
+
+---
+
+## 看板保护
+
+### `protect_manual_dashboard_edits.py` — 人工编辑保护
+
+改生产看板前后各跑一次：`snapshot` 落一份带时间戳的元数据，`diff` 列出实际变动的字段，用来确认没有误伤用户在 UI 里手工调过的图表配置。
+
+```bash
+./venv/bin/python protect_manual_dashboard_edits.py snapshot
+./venv/bin/python protect_manual_dashboard_edits.py diff
+```
+
+---
+
 ## 跳板工具
 
 | 脚本 | 用途 |
