@@ -21,6 +21,7 @@ cd /opt/superset
 
 # 生产机（经跳板）
 # Windows 本地用 jump_run.py / jump_put_fast.py 传文件执行
+#   先设置跳板凭据：$env:JUMP_USER='<账号>'; $env:JUMP_PASSWORD='<密码>'
 # 或 ssh 进跳板后 ssh 10.100.19.1，cd /mnt/data/superset
 ```
 
@@ -159,6 +160,19 @@ sudo systemctl restart superset
 | `sync_sr_node_hw.py` / `.sh` | 每日采集集群硬件：抓 6 个节点 `:9100` 的 node_exporter，关联 `SHOW FRONTENDS` / `SHOW COMPUTE NODES`，落 `ads_sr_node_hw` / `ads_sr_node_disk`。cron `17 3 * * *` |
 | `add_cluster_hardware.py` | 把「节点硬件」「磁盘与挂载」两张图插进集群概览的集群名片下方。幂等，不动 `json_metadata` |
 | `sync_sr_rg_bindings.py` / `.sh` | 把 `SHOW RESOURCE GROUPS ALL` 的 classifier 解析落 `bluetti.ads_sr_global_rg_bindings`（`SHOW` 不能 join，只能先落表）。生产 crontab 每小时第 23 分；写新 `snapshot_ts` 再删旧的，滚动留 3 份，读侧取 `MAX(snapshot_ts)` |
+
+---
+
+## 看板保护
+
+### `protect_manual_dashboard_edits.py` — 人工编辑保护
+
+改生产看板前后各跑一次：`snapshot` 落一份带时间戳的元数据，`diff` 列出实际变动的字段，用来确认没有误伤用户在 UI 里手工调过的图表配置。
+
+```bash
+./venv/bin/python protect_manual_dashboard_edits.py snapshot
+./venv/bin/python protect_manual_dashboard_edits.py diff
+```
 
 ---
 
