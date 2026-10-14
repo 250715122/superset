@@ -159,6 +159,7 @@ sudo systemctl restart superset
 | `apply_top_add_duration.py` | 给 CPU / 内存 TOP 榜补「最大耗时」列。只改 `metrics`，其余 params 原样保留（这两张图有手工调过的显示设置） |
 | `sync_sr_node_hw.py` / `.sh` | 每日采集集群硬件：抓 6 个节点 `:9100` 的 node_exporter，关联 `SHOW FRONTENDS` / `SHOW COMPUTE NODES`，落 `ads_sr_node_hw` / `ads_sr_node_disk`。cron `17 3 * * *` |
 | `add_cluster_hardware.py` | 把「节点硬件」「磁盘与挂载」两张图插进集群概览的集群名片下方。幂等，不动 `json_metadata` |
+| `rename_cluster_hosts.sh [plan\|apply\|verify\|rollback]` | 给 6 台 StarRocks 节点改主机名，不重启机器也不重启服务。在 Superset 机上跑，逐台分发 `rename_cluster_hosts_node.sh`。会一并修 `/etc/hosts`（保留 `flink-jm*` 别名）并钉住 cloud-init，备份在各机 `/var/backups/hostname-rename/` |
 | `sync_sr_rg_bindings.py` / `.sh` | 把 `SHOW RESOURCE GROUPS ALL` 的 classifier 解析落 `bluetti.ads_sr_global_rg_bindings`（`SHOW` 不能 join，只能先落表）。生产 crontab 每小时第 23 分；写新 `snapshot_ts` 再删旧的，滚动留 3 份，读侧取 `MAX(snapshot_ts)` |
 
 ---
