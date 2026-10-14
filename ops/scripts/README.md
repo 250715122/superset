@@ -21,7 +21,6 @@ cd /opt/superset
 
 # 生产机（经跳板）
 # Windows 本地用 jump_run.py / jump_put_fast.py 传文件执行
-#   先设置跳板凭据：$env:JUMP_USER='<账号>'; $env:JUMP_PASSWORD='<密码>'
 # 或 ssh 进跳板后 ssh 10.100.19.1，cd /mnt/data/superset
 ```
 
@@ -140,6 +139,12 @@ sudo systemctl restart superset
 | `pb_show_value.py` | 柱状图开启数值显示 |
 | `pb_pct_unify.py` | SOC/SOH 卡片统一百分比格式 |
 | `pb_fix_timefilter.py` | 修复图表时间筛选器接线 |
+| `fix_detail_time_filter.py [apply\|verify\|revert]` | 卡车电池看板：左侧「时间范围」作用域放开到全部图表、删掉重复的「时间范围(数据详情)」、明细表行数上限 5000→50000 并追加"先选设备号"提示。支持 `--dry-run`，改前自动快照到 `backups/` |
+| `fix_detail_device_filter.py [apply\|verify\|revert]` | 卡车电池看板：修复被 UI 存坏的「设备号(数据详情)」——取值指回小快照表、钉死默认设备（`--sn=` 换设备，默认 `B52525000081783`）、设为必填。支持 `--dry-run` / `--dash=<id>`，改前自动快照到 `backups/` |
+| `_check_filter_scope.py [看板id\|标题片段]` | 只读巡检筛选器作用域，排查"某图表不受左侧筛选限制" |
+| `_dbg_devfilter.py [看板id]` | 只读 dump 看板筛选器配置原文与各图表数据集/行数上限，排查配置被写坏 |
+| `_probe_detail_tab_cost.py [设备SN]` | 只读：数据详情 Tab 的查询在"单设备 vs 全设备"下各要多久、扫多少行 |
+| `_verify_detail_e2e.py` | 只读端到端验证：明细表选定设备+时间范围后，页面与 CSV 导出的时间跨度 |
 
 ---
 
@@ -147,22 +152,13 @@ sudo systemctl restart superset
 
 | 脚本 | 用途 |
 |---|---|
-| `build_run_analysis_tab.py` | 建「运行分析」Tab：数据集 190–195、图表 644–653、Tab 内 5 个筛选器。幂等，但**会重建布局**，只改单张图请另写补丁脚本 |
+| `build_run_analysis_tab.py` | （历史）建「运行分析」Tab：数据集 190–195、图表 644–653、Tab 内 5 个筛选器。**不要再跑**：该 Tab 已手工拆成「运行状态」+「性能分析」，重跑会把布局推回单 Tab |
 | `apply_run_analysis_followups.py` | 定点补丁：平均耗时改毫秒、「用户清单」资源组列改走配置绑定 |
+| `apply_run_status_rework.py` | 双 Tab 返工：筛选器跨 Tab 重新作用域、审计明细、查询平均耗时只算 SELECT、TOP 榜按语句前 200 字符聚合、导入任务并入 routine load / pipe。改前自动快照 |
+| `apply_top_add_duration.py` | 给 CPU / 内存 TOP 榜补「最大耗时」列。只改 `metrics`，其余 params 原样保留（这两张图有手工调过的显示设置） |
+| `sync_sr_node_hw.py` / `.sh` | 每日采集集群硬件：抓 6 个节点 `:9100` 的 node_exporter，关联 `SHOW FRONTENDS` / `SHOW COMPUTE NODES`，落 `ads_sr_node_hw` / `ads_sr_node_disk`。cron `17 3 * * *` |
+| `add_cluster_hardware.py` | 把「节点硬件」「磁盘与挂载」两张图插进集群概览的集群名片下方。幂等，不动 `json_metadata` |
 | `sync_sr_rg_bindings.py` / `.sh` | 把 `SHOW RESOURCE GROUPS ALL` 的 classifier 解析落 `bluetti.ads_sr_global_rg_bindings`（`SHOW` 不能 join，只能先落表）。生产 crontab 每小时第 23 分；写新 `snapshot_ts` 再删旧的，滚动留 3 份，读侧取 `MAX(snapshot_ts)` |
-
----
-
-## 看板保护
-
-### `protect_manual_dashboard_edits.py` — 人工编辑保护
-
-改生产看板前后各跑一次：`snapshot` 落一份带时间戳的元数据，`diff` 列出实际变动的字段，用来确认没有误伤用户在 UI 里手工调过的图表配置。
-
-```bash
-./venv/bin/python protect_manual_dashboard_edits.py snapshot
-./venv/bin/python protect_manual_dashboard_edits.py diff
-```
 
 ---
 
