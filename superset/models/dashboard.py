@@ -253,10 +253,12 @@ class Dashboard(AuditMixinNullable, ImportExportMixin, Model):
             "is_managed_externally": self.is_managed_externally,
         }
 
-    def datasets_trimmed_for_slices(self) -> list[dict[str, Any]]:
+    def datasets_trimmed_for_slices(
+        self, slices: list[Slice] | None = None
+    ) -> list[dict[str, Any]]:
         slices_by_datasource: dict[int, set[Slice]] = defaultdict(set)
 
-        for slc in self.slices:
+        for slc in self.slices if slices is None else slices:
             slices_by_datasource[slc.datasource_id].add(slc)
 
         result: list[dict[str, Any]] = []
@@ -287,14 +289,18 @@ class Dashboard(AuditMixinNullable, ImportExportMixin, Model):
 
     @property
     def tabs(self) -> dict[str, Any]:
-        if self.position == {}:
+        return self.tabs_for_position(self.position)
+
+    @staticmethod
+    def tabs_for_position(position: dict[str, Any]) -> dict[str, Any]:
+        if position == {}:
             return {}
 
-        def get_node(node_id: str) -> dict[str, Any]:
+        def get_node(node_id: str) -> dict[str, Any] | None:
             """
             Helper function for getting a node from the position_data
             """
-            return self.position[node_id]
+            return position.get(node_id)
 
         def build_tab_tree(
             node: dict[str, Any], children: list[dict[str, Any]]
@@ -307,6 +313,9 @@ class Dashboard(AuditMixinNullable, ImportExportMixin, Model):
             # new children to overwrite parent's children
             for child_id in node.get("children", []):
                 child = get_node(child_id)
+                if child is None:
+                    # the layout may have been trimmed for this user
+                    continue
                 if node["type"] == "TABS":
                     # if TABS add create a new list and append children to it
                     # new_children.append(child)
@@ -323,6 +332,8 @@ class Dashboard(AuditMixinNullable, ImportExportMixin, Model):
                 all_tabs[node["id"]] = node["title"]
 
         root = get_node("ROOT_ID")
+        if root is None:
+            return {}
         tab_tree: list[dict[str, Any]] = []
         all_tabs: dict[str, str] = {}
         queue: deque[tuple[dict[str, Any], list[dict[str, Any]]]] = deque()

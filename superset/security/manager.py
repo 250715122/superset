@@ -591,6 +591,7 @@ class SupersetSecurityManager(  # pylint: disable=too-many-public-methods
         """
 
         from superset.connectors.sqla.models import TableColumn
+        from superset.dashboards import tab_access
         from superset.models.slice import Slice
 
         return bool(
@@ -603,6 +604,8 @@ class SupersetSecurityManager(  # pylint: disable=too-many-public-methods
                 .one_or_none()
             )
             and slc in dashboard.slices
+            # drilling must not reach charts hidden behind a restricted tab
+            and slc.id in tab_access.visible_slice_ids(dashboard)
             and slc.datasource == datasource
             and (dimensions := form_data.get("groupby"))
             and (
@@ -2283,6 +2286,7 @@ class SupersetSecurityManager(  # pylint: disable=too-many-public-methods
         # pylint: disable=import-outside-toplevel
         from superset import is_feature_enabled
         from superset.connectors.sqla.models import SqlaTable
+        from superset.dashboards import tab_access
         from superset.models.dashboard import Dashboard
         from superset.models.slice import Slice
         from superset.models.sql_lab import Query
@@ -2428,7 +2432,9 @@ class SupersetSecurityManager(  # pylint: disable=too-many-public-methods
                             form_data.get("type") == "NATIVE_FILTER"
                             and (native_filter_id := form_data.get("native_filter_id"))
                             and dashboard_.json_metadata
-                            and (json_metadata := json.loads(dashboard_.json_metadata))
+                            # filters scoped only to tabs this user may not see
+                            # are dropped, so they cannot be queried either
+                            and (json_metadata := tab_access.filtered_metadata(dashboard_))
                             and any(
                                 target.get("datasetId") == datasource.id
                                 for fltr in json_metadata.get(
@@ -2449,6 +2455,9 @@ class SupersetSecurityManager(  # pylint: disable=too-many-public-methods
                                 .one_or_none()
                             )
                             and slc in dashboard_.slices
+                            # a chart that only sits under a tab this user may
+                            # not see must not inherit the dashboard's grant
+                            and slc.id in tab_access.visible_slice_ids(dashboard_)
                             and slc.datasource == datasource
                         )
                         or self.has_drill_by_access(form_data, dashboard_, datasource)

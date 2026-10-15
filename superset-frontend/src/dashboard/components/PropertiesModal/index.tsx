@@ -66,6 +66,7 @@ import {
 } from 'src/dashboard/actions/dashboardState';
 import { areObjectsEqual } from 'src/reduxUtils';
 import { ModalTitleWithIcon } from 'src/components/ModalTitleWithIcon';
+import TabRolesControl, { type TabRoles } from './TabRolesControl';
 
 const StyledJsonEditor = styled(JsonEditor)`
   /* Border is already applied by AceEditor itself */
@@ -274,6 +275,18 @@ const PropertiesModal = ({
       name: r.label,
     }));
     setRoles(parsedRoles);
+  };
+
+  // tab_roles lives in the JSON metadata, so the advanced editor and this
+  // control stay two views onto the same value
+  const handleOnChangeTabRoles = (tabRoles: TabRoles) => {
+    const jsonMetadataObj = getJsonMetadata();
+    if (Object.keys(tabRoles).length) {
+      jsonMetadataObj.tab_roles = tabRoles;
+    } else {
+      delete jsonMetadataObj.tab_roles;
+    }
+    setJsonMetadata(jsonStringify(jsonMetadataObj));
   };
 
   const handleOwnersSelectValue = () => {
@@ -539,6 +552,16 @@ const PropertiesModal = ({
                 value={handleRolesSelectValue()}
               />
             </FormItem>
+          </Col>
+        </Row>
+        <Row gutter={16}>
+          <Col xs={24} md={12}>
+            <TabRolesControl
+              dashboardId={dashboardId}
+              disabled={isLoading}
+              onChange={handleOnChangeTabRoles}
+              value={jsonMetadataObj?.tab_roles || {}}
+            />
           </Col>
         </Row>
         <Row>

@@ -31,6 +31,7 @@ from superset.commands.dashboard.exceptions import (
     DashboardUpdateFailedError,
 )
 from superset.daos.base import BaseDAO
+from superset.dashboards import tab_access
 from superset.dashboards.filters import DashboardAccessFilter, is_uuid
 from superset.exceptions import SupersetSecurityException
 from superset.extensions import db
@@ -79,16 +80,21 @@ class DashboardDAO(BaseDAO[Dashboard]):
     @staticmethod
     def get_datasets_for_dashboard(id_or_slug: str) -> list[Any]:
         dashboard = DashboardDAO.get_by_id_or_slug(id_or_slug)
-        return dashboard.datasets_trimmed_for_slices()
+        visible = tab_access.visible_slice_ids(dashboard)
+        return dashboard.datasets_trimmed_for_slices(
+            [slc for slc in dashboard.slices if slc.id in visible]
+        )
 
     @staticmethod
     def get_tabs_for_dashboard(id_or_slug: str) -> dict[str, Any]:
         dashboard = DashboardDAO.get_by_id_or_slug(id_or_slug)
-        return dashboard.tabs
+        return dashboard.tabs_for_position(tab_access.filtered_position(dashboard))
 
     @staticmethod
     def get_charts_for_dashboard(id_or_slug: str) -> list[Slice]:
-        return DashboardDAO.get_by_id_or_slug(id_or_slug).slices
+        dashboard = DashboardDAO.get_by_id_or_slug(id_or_slug)
+        visible = tab_access.visible_slice_ids(dashboard)
+        return [slc for slc in dashboard.slices if slc.id in visible]
 
     @staticmethod
     def get_dashboard_changed_on(id_or_slug_or_dashboard: str | Dashboard) -> datetime:

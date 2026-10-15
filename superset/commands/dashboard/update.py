@@ -37,6 +37,7 @@ from superset.commands.dashboard.exceptions import (
 from superset.commands.utils import populate_roles, update_tags, validate_tags
 from superset.daos.dashboard import DashboardDAO
 from superset.daos.report import ReportScheduleDAO
+from superset.dashboards import tab_access
 from superset.exceptions import SupersetSecurityException
 from superset.models.dashboard import Dashboard
 from superset.reports.models import ReportSchedule
@@ -88,6 +89,16 @@ class UpdateDashboardCommand(UpdateMixin, BaseCommand):
             security_manager.raise_for_ownership(self._model)
         except SupersetSecurityException as ex:
             raise DashboardForbiddenError() from ex
+
+        # Ownership currently implies seeing every tab, so this never fires. It
+        # is here because the layout being saved is whatever the browser holds:
+        # were a user with a trimmed layout ever allowed to write, the tabs
+        # missing from their copy would be taken for deleted, and
+        # process_tab_diff would go on to deactivate the reports using them.
+        if "position_json" in self._properties and not tab_access.has_unrestricted_access(  # noqa: E501
+            self._model
+        ):
+            raise DashboardForbiddenError()
 
         # Validate slug uniqueness
         if not DashboardDAO.validate_update_slug_uniqueness(self._model_id, slug):

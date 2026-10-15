@@ -67,6 +67,7 @@ from superset.commands.importers.exceptions import NoValidFilesFoundError
 from superset.commands.importers.v1.utils import get_contents_from_bundle
 from superset.constants import MODEL_API_RW_METHOD_PERMISSION_MAP, RouteMethod
 from superset.daos.dashboard import DashboardDAO, EmbeddedDashboardDAO
+from superset.dashboards import tab_access
 from superset.dashboards.filters import (
     DashboardAccessFilter,
     DashboardCertifiedFilter,
@@ -377,6 +378,9 @@ class DashboardRestApi(BaseSupersetModelRestApi):
               $ref: '#/components/responses/404'
         """
         result = self.dashboard_get_response_schema.dump(dash)
+        if tab_access.is_restricted(dash):
+            result["position_json"] = json.dumps(tab_access.filtered_position(dash))
+            result["json_metadata"] = json.dumps(tab_access.filtered_metadata(dash))
         add_extra_log_payload(
             dashboard_id=dash.id, action=f"{self.__class__.__name__}.get"
         )

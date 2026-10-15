@@ -167,6 +167,13 @@ class DashboardJSONMetadataSchema(Schema):
     remote_id = fields.Integer()
     filter_bar_orientation = fields.Str(allow_none=True)
     native_filter_migration = fields.Dict()
+    # per-tab access control: layout tab id -> names of the roles allowed to
+    # see that tab. See superset/dashboards/tab_access.py
+    tab_roles = fields.Dict(
+        keys=fields.Str(),
+        values=fields.List(fields.Str()),
+        allow_none=True,
+    )
 
     @pre_load
     def remove_show_native_filters(  # pylint: disable=unused-argument
