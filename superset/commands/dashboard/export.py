@@ -29,6 +29,7 @@ from superset.commands.tag.export import ExportTagsCommand
 from superset.commands.dashboard.exceptions import DashboardNotFoundError
 from superset.commands.dashboard.importers.v1.utils import find_chart_uuids
 from superset.daos.dashboard import DashboardDAO
+from superset.dashboards import tab_access
 from superset.commands.export.models import ExportModelsCommand
 from superset.commands.dataset.export import ExportDatasetsCommand
 from superset.daos.dataset import DatasetDAO
@@ -134,6 +135,18 @@ class ExportDashboardsCommand(ExportModelsCommand):
                     logger.info("Unable to decode `%s` field: %s", key, value)
                     payload[new_name] = {}
 
+        # An export is a read path like any other, so a user who may only see
+        # some of the tabs must not get the layout, the filter scopes or the
+        # charts of the ones they may not. Owners and admins are unrestricted
+        # and keep exporting the dashboard whole, which is what makes the
+        # export usable for moving a dashboard between environments.
+        visible_slices = model.slices
+        if tab_access.is_restricted(model):
+            payload["position"] = tab_access.filtered_position(model)
+            payload["metadata"] = tab_access.filtered_metadata(model)
+            visible_ids = tab_access.visible_slice_ids(model)
+            visible_slices = [slc for slc in model.slices if slc.id in visible_ids]
+
         # Extract all native filter datasets and replace native
         # filter dataset references with uuid
         for native_filter in payload.get("metadata", {}).get(
@@ -155,7 +168,9 @@ class ExportDashboardsCommand(ExportModelsCommand):
         # in a new row
         referenced_charts = find_chart_uuids(payload["position"])
         orphan_charts = {
-            chart for chart in model.slices if str(chart.uuid) not in referenced_charts
+            chart
+            for chart in visible_slices
+            if str(chart.uuid) not in referenced_charts
         }
 
         if orphan_charts:
@@ -184,8 +199,10 @@ class ExportDashboardsCommand(ExportModelsCommand):
             lambda: ExportDashboardsCommand._file_content(model),
         )
 
+        visible_ids = tab_access.visible_slice_ids(model)
+
         if export_related:
-            chart_ids = [chart.id for chart in model.slices]
+            chart_ids = [chart.id for chart in model.slices if chart.id in visible_ids]
             dashboard_ids = model.id
             command = ExportChartsCommand(chart_ids)
             command.disable_tag_export()
@@ -218,6 +235,11 @@ class ExportDashboardsCommand(ExportModelsCommand):
                 except (TypeError, json.JSONDecodeError):
                     logger.info("Unable to decode `%s` field: %s", key, value)
                     payload[new_name] = {}
+
+        if tab_access.is_restricted(model):
+            # Filters scoped only to tabs this user cannot see are gone from
+            # the exported dashboard, so their datasets must not ship either.
+            payload["metadata"] = tab_access.filtered_metadata(model)
 
         if export_related:
             # Extract all native filter datasets and export referenced datasets

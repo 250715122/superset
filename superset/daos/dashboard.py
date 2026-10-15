@@ -295,6 +295,15 @@ class DashboardDAO(BaseDAO[Dashboard]):
         ):
             raise DashboardForbiddenError()
 
+        # The copy carries over every slice of the original, so letting a user
+        # who only sees some of the tabs copy it would make them the owner of a
+        # dashboard holding the hidden tabs' charts - and ownership is exactly
+        # what grants the datasource access this feature withholds.
+        if tab_access.is_restricted(
+            original_dash
+        ) and not tab_access.has_unrestricted_access(original_dash):
+            raise DashboardForbiddenError()
+
         dash = Dashboard()
         dash.owners = [g.user] if g.user else []
         dash.dashboard_title = data["dashboard_title"]

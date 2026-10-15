@@ -9,7 +9,7 @@ SRC="$3"
 TS=$(date +%Y%m%d%H%M%S)
 BACKUP="$(dirname "$PKG")/_tab_access_backup_$TS"
 
-EXISTING="dashboards/api.py dashboards/schemas.py daos/dashboard.py models/dashboard.py security/manager.py commands/dashboard/update.py"
+EXISTING="dashboards/api.py dashboards/schemas.py daos/dashboard.py models/dashboard.py security/manager.py commands/dashboard/update.py commands/dashboard/export.py"
 NEW="dashboards/tab_access.py"
 
 for f in $EXISTING; do
