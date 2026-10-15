@@ -101,6 +101,55 @@ sudo systemctl restart superset
 
 ---
 
+## Tab 级权限（源码改造）
+
+让同一块看板下的不同 Tab 只对持有指定角色的人可见。不是 Superset 原生能力，
+需要给 venv 里的包打补丁并重新构建前端。原理、改动清单、回滚见
+`../docs/Superset变更与生产同步操作手册.md` 第六节。
+
+### `install_tab_access.sh` — 安装后端补丁
+
+覆盖前先把原文件备份到 `<site-packages>/_tab_access_backup_<时间戳>/`，
+逐个 `py_compile`，再试导入确认没有循环引用。**每次升级 Superset 后必须重装**。
+
+```bash
+bash install_tab_access.sh <venv 的 python> <site-packages/superset 目录> <暂存目录>
+```
+
+### `build_frontend_tabroles.sh` — 构建带配置界面的前端资产
+
+在构建机 `gt@192.168.56.101:/opt/superset-build` 上执行，产物是 `static/assets`。
+
+### `run_tab_access_http_check.sh` — 验收（改完必跑）
+
+以管理员和一个没有该角色的账号分别真实登录，比对两边拿到的 Tab / 图表 /
+数据集，并实际请求一次受限图表的数据，预期管理员通、该账号 403。
+临时建一个管理员账号，跑完即删。
+
+```bash
+bash run_tab_access_http_check.sh <看板id> <账号>:<密码>
+```
+
+### `setup_tab_access_demo.py` — 搭一个可手工点验的演示场景
+
+把某个 Tab 限定给一个一次性角色，并建一个**不持有**该角色的演示账号，
+用于人工验收。`teardown` 按 setup 存下的副本原样还原 `json_metadata`。
+
+```bash
+./venv/bin/python setup_tab_access_demo.py setup <看板id> [tab id]
+./venv/bin/python setup_tab_access_demo.py teardown <看板id>
+```
+
+### 回归脚本
+
+| 脚本 | 覆盖 |
+|---|---|
+| `test_tab_access.py <看板id>` | 全链路：写入、四个读取出口、`raise_for_access`、下钻 |
+| `test_tab_access_edges.py` | 24 条边界：嵌套 Tab、空容器塌缩、一图多处、筛选器作用域 |
+| `test_tab_access_portability.py <看板id>` | 导出导入往返后限制仍在；受限用户拿不到隐藏内容 |
+
+---
+
 ## 数据保护脚本
 
 ### `fix_ds54_guard.py` — 数据集裸查防护
