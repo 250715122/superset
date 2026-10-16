@@ -1,0 +1,794 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<title>数据资产检索</title>
+<style>
+{{ font_css|safe }}
+
+/* ---------------------------------------------------------------- tokens
+   Light is the default; .dark and .compact are set by the theme sync below
+   from Superset's own stored preference. Palette follows Superset's Ant
+   Design theme so the page does not read as foreign inside a dashboard. */
+:root {
+  --bg:#fff; --surface-1:#fff; --surface-2:#f7f8f9; --surface-3:#eef1f3;
+  --border:#e3e7ea; --border-strong:#cfd6db;
+  --text-1:#1b2a33; --text-2:#5a6b76; --text-3:#8b9aa4;
+  --accent:#20a7c9; --accent-hover:#1a8aa8; --accent-soft:#e8f6fa;
+  --mark-bg:#fff1b8; --mark-fg:#613400;
+  --native-bg:#f6ffed; --native-fg:#3f7d20; --native-line:#c4e8a4;
+  --llm-bg:#fff8e6;    --llm-fg:#ad6800;    --llm-line:#ffdf9e;
+  --human-bg:#e8f6fa;  --human-fg:#0a7194;  --human-line:#a3dcec;
+  --shadow:0 1px 2px rgba(27,42,51,.05), 0 2px 8px rgba(27,42,51,.04);
+  --shadow-up:0 2px 4px rgba(27,42,51,.07), 0 6px 20px rgba(27,42,51,.07);
+  --skeleton:linear-gradient(90deg,#eef1f3 25%,#f6f8f9 37%,#eef1f3 63%);
+
+  --fs-xs:11px; --fs-sm:12px; --fs-md:13px; --fs-lg:14px; --fs-xl:17px;
+  --sp:4px; --radius:6px; --radius-sm:4px;
+  --row-pad:12px;
+  --font:Inter,"Helvetica Neue",Arial,"PingFang SC","Microsoft YaHei",sans-serif;
+  --mono:"SFMono-Regular",ui-monospace,Menlo,Consolas,"Liberation Mono",monospace;
+}
+.dark {
+  --bg:#141414; --surface-1:#1a1a1a; --surface-2:#1f1f1f; --surface-3:#262626;
+  --border:#303030; --border-strong:#434343;
+  --text-1:rgba(255,255,255,.88); --text-2:rgba(255,255,255,.6);
+  --text-3:rgba(255,255,255,.4);
+  --accent:#35b8d8; --accent-hover:#5fcce6; --accent-soft:#10303a;
+  --mark-bg:#614700; --mark-fg:#ffe58f;
+  --native-bg:#162312; --native-fg:#95de64; --native-line:#2c4518;
+  --llm-bg:#2b2111;    --llm-fg:#ffc53d;    --llm-line:#594214;
+  --human-bg:#10303a;  --human-fg:#5fcce6;  --human-line:#154a5a;
+  --shadow:0 1px 2px rgba(0,0,0,.4); --shadow-up:0 4px 16px rgba(0,0,0,.5);
+  --skeleton:linear-gradient(90deg,#1f1f1f 25%,#2a2a2a 37%,#1f1f1f 63%);
+}
+.compact { --row-pad:8px; --fs-lg:13px; --fs-xl:15px; }
+
+/* ----------------------------------------------------------------- base */
+* { box-sizing:border-box; }
+html, body { background:var(--bg); }
+body {
+  margin:0; padding:20px 24px 40px; color:var(--text-1);
+  font:400 var(--fs-lg)/1.6 var(--font);
+  -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
+}
+.wrap { max-width:1200px; margin:0 auto; }
+button { font-family:inherit; }
+
+/* --------------------------------------------------------------- search */
+.search {
+  position:sticky; top:0; z-index:10; background:var(--bg);
+  padding:2px 0 12px; margin-bottom:4px;
+}
+.field { display:flex; gap:8px; }
+.inputwrap { position:relative; flex:1; }
+.inputwrap input {
+  width:100%; height:40px; padding:0 72px 0 38px;
+  font:400 var(--fs-lg)/40px var(--font); color:var(--text-1);
+  background:var(--surface-1); border:1px solid var(--border-strong);
+  border-radius:var(--radius); transition:border-color .15s, box-shadow .15s;
+}
+.inputwrap input::placeholder { color:var(--text-3); }
+.inputwrap input:focus {
+  outline:none; border-color:var(--accent);
+  box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.icon {
+  position:absolute; left:13px; top:50%; transform:translateY(-50%);
+  width:15px; height:15px; color:var(--text-3); pointer-events:none;
+}
+.slash {
+  position:absolute; right:12px; top:50%; transform:translateY(-50%);
+  font-size:var(--fs-xs); color:var(--text-3); pointer-events:none;
+  border:1px solid var(--border); border-radius:var(--radius-sm);
+  padding:1px 6px; background:var(--surface-2);
+}
+.inputwrap input:focus ~ .slash { opacity:0; }
+.clear {
+  position:absolute; right:11px; top:50%; transform:translateY(-50%);
+  display:none; align-items:center; justify-content:center;
+  width:20px; height:20px; padding:0; border:0; border-radius:50%;
+  background:var(--surface-2); color:var(--text-3); cursor:pointer;
+  transition:color .15s, background .15s;
+}
+.clear svg { width:9px; height:9px; }
+.clear:hover { color:var(--text-1); background:var(--border); }
+/* The hint and the clear button share the same corner, so they take turns. */
+.inputwrap.filled .clear { display:flex; }
+.inputwrap.filled .slash { display:none; }
+.go {
+  height:40px; padding:0 22px; font-size:var(--fs-lg); font-weight:500;
+  border:0; border-radius:var(--radius); cursor:pointer;
+  background:var(--accent); color:#fff; transition:background .15s;
+}
+.go:hover:not(:disabled) { background:var(--accent-hover); }
+.go:disabled { opacity:.55; cursor:default; }
+
+/* -------------------------------------------------------------- filters */
+.filters { display:flex; flex-wrap:wrap; gap:16px; margin-top:12px; }
+.fgroup { display:flex; align-items:center; gap:6px; }
+.flabel { font-size:var(--fs-sm); color:var(--text-3); }
+.chip {
+  font-size:var(--fs-sm); line-height:22px; padding:0 10px; cursor:pointer;
+  border:1px solid var(--border); border-radius:11px;
+  background:var(--surface-1); color:var(--text-2); transition:all .12s;
+}
+.chip:hover { border-color:var(--accent); color:var(--accent); }
+.chip[aria-pressed="true"] {
+  background:var(--accent); border-color:var(--accent); color:#fff;
+}
+
+/* ------------------------------------------------------------ meta line */
+.status {
+  display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+  font-size:var(--fs-sm); color:var(--text-3); margin:14px 0 10px;
+}
+.status b { color:var(--text-2); font-weight:500; }
+.degraded {
+  padding:8px 12px; border-radius:var(--radius); margin:12px 0;
+  font-size:var(--fs-md); background:var(--llm-bg); color:var(--llm-fg);
+  border:1px solid var(--llm-line);
+}
+
+/* --------------------------------------------------------------- result */
+.card {
+  background:var(--surface-1); border:1px solid var(--border);
+  border-radius:var(--radius); margin-bottom:8px; overflow:hidden;
+  transition:border-color .15s, box-shadow .15s;
+}
+.card:hover { border-color:var(--border-strong); box-shadow:var(--shadow); }
+.card.sel { border-color:var(--accent); }
+.card.open { border-color:var(--accent); box-shadow:var(--shadow-up); }
+
+.head { padding:var(--row-pad) 14px; cursor:pointer; user-select:none; }
+.head:hover { background:var(--surface-2); }
+.line1 { display:flex; align-items:center; gap:8px; }
+.caret {
+  flex:none; width:12px; color:var(--text-3); font-size:9px;
+  transition:transform .18s ease;
+}
+.card.open .caret { transform:rotate(90deg); }
+.name { font-family:var(--mono); font-size:var(--fs-lg); min-width:0; }
+.prefix { color:var(--text-3); font-weight:400; }
+.tname { color:var(--text-1); font-weight:600; }
+.spacer { flex:1; }
+
+.relevance { display:flex; align-items:center; gap:7px; flex:none; }
+.bars { display:flex; gap:2px; }
+.bars i { width:4px; height:12px; border-radius:1px; background:var(--surface-3); }
+.bars i.on { background:var(--accent); }
+.rlabel {
+  font-size:var(--fs-xs); color:var(--text-3); width:26px; text-align:right;
+}
+
+.line2 {
+  display:flex; align-items:baseline; gap:10px;
+  margin:5px 0 0 20px; min-width:0;
+}
+.desc {
+  font-size:var(--fs-lg); color:var(--text-2); min-width:0;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.desc.none { color:var(--text-3); font-style:italic; }
+.fieldn { flex:none; font-size:var(--fs-sm); color:var(--text-3); }
+
+.line3 {
+  display:flex; align-items:center; gap:5px; flex-wrap:wrap;
+  margin:8px 0 0 20px;
+}
+.line3 .lab { font-size:var(--fs-xs); color:var(--text-3); margin-right:2px; }
+.colchip {
+  font-family:var(--mono); font-size:var(--fs-xs); line-height:19px;
+  padding:0 7px; border-radius:var(--radius-sm);
+  background:var(--surface-2); color:var(--text-2);
+  border:1px solid var(--border);
+}
+.more {
+  font-size:var(--fs-xs); color:var(--accent); cursor:pointer;
+  background:none; border:0; padding:0 4px;
+}
+
+/* ----------------------------------------------------------------- tags */
+.tag {
+  flex:none; font-size:var(--fs-xs); line-height:18px; padding:0 7px;
+  border-radius:9px; white-space:nowrap; font-weight:500;
+}
+.tag.native { background:var(--native-bg); color:var(--native-fg); border:1px solid var(--native-line); }
+.tag.llm    { background:var(--llm-bg);    color:var(--llm-fg);    border:1px solid var(--llm-line); }
+.tag.human  { background:var(--human-bg);  color:var(--human-fg);  border:1px solid var(--human-line); }
+
+/* -------------------------------------------------------------- columns */
+.cols { border-top:1px solid var(--border); background:var(--surface-2); }
+table { width:100%; border-collapse:collapse; table-layout:fixed; }
+col.c-name { width:26%; } col.c-type { width:11%; }
+col.c-src { width:88px; } col.c-act { width:76px; }
+th {
+  text-align:left; font-weight:500; font-size:var(--fs-xs); color:var(--text-3);
+  padding:8px 14px; border-bottom:1px solid var(--border);
+  letter-spacing:.02em; text-transform:uppercase;
+}
+td { padding:6px 14px; border-bottom:1px solid var(--border); vertical-align:middle; }
+tbody tr:last-child td { border-bottom:0; }
+tbody tr:hover { background:var(--surface-3); }
+td.cname {
+  font-family:var(--mono); font-size:var(--fs-md);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.dtype {
+  font-family:var(--mono); font-size:var(--fs-xs); line-height:18px;
+  padding:0 6px; border-radius:var(--radius-sm);
+  background:var(--surface-3); color:var(--text-2); white-space:nowrap;
+}
+.cedit { position:relative; display:flex; align-items:center; gap:6px; }
+.cm {
+  flex:1; min-height:24px; padding:3px 8px; border-radius:var(--radius-sm);
+  border:1px solid transparent; color:var(--text-1); font-size:var(--fs-md);
+  transition:border-color .12s, background .12s;
+}
+tr:hover .cm { border-color:var(--border); background:var(--surface-1); }
+.cm:focus {
+  outline:none; border-color:var(--accent); background:var(--surface-1);
+  box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent);
+}
+.cm:empty::before { content:'点击补充说明'; color:var(--text-3); }
+.pencil { flex:none; width:13px; height:13px; color:var(--text-3); opacity:0; }
+tr:hover .pencil { opacity:1; }
+.cm:focus ~ .pencil { opacity:0; }
+.save {
+  border:1px solid var(--border); background:var(--surface-1); color:var(--text-2);
+  cursor:pointer; font-size:var(--fs-sm); padding:2px 10px;
+  border-radius:var(--radius-sm); white-space:nowrap; transition:all .12s;
+}
+.save:hover:not(:disabled) { border-color:var(--accent); color:var(--accent); }
+.save:disabled { cursor:default; opacity:.75; }
+.save.done { border-color:var(--native-line); color:var(--native-fg); background:var(--native-bg); }
+.save.err  { border-color:var(--llm-line); color:var(--llm-fg); background:var(--llm-bg); }
+
+/* --------------------------------------------------------------- states */
+.landing { padding:56px 0 40px; text-align:center; }
+.landing h1 { font-size:var(--fs-xl); font-weight:600; margin:0 0 8px; }
+.landing p { font-size:var(--fs-md); color:var(--text-2); margin:0 0 22px; }
+.landing .lab { font-size:var(--fs-sm); color:var(--text-3); margin-right:6px; }
+.examples { display:flex; gap:8px; justify-content:center; flex-wrap:wrap; }
+.empty { padding:56px 0; text-align:center; color:var(--text-2); font-size:var(--fs-md); }
+.empty .sub { color:var(--text-3); font-size:var(--fs-sm); margin-top:6px; }
+
+.sk { padding:var(--row-pad) 14px; }
+.sk span, .sk em {
+  display:block; height:11px; border-radius:3px;
+  background:var(--skeleton); background-size:400% 100%;
+  animation:shimmer 1.3s ease-in-out infinite;
+}
+.sk span { width:38%; }
+.sk em { width:62%; margin:9px 0 0 20px; height:10px; }
+@keyframes shimmer { 0% { background-position:100% 0; } 100% { background-position:-100% 0; } }
+
+mark { background:var(--mark-bg); color:var(--mark-fg); padding:0 2px; border-radius:2px; }
+.legend { display:flex; gap:14px; flex-wrap:wrap; font-size:var(--fs-sm); color:var(--text-3); }
+.legend span { display:inline-flex; align-items:center; gap:5px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="search">
+    <div class="field">
+      <div class="inputwrap">
+        <svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+             stroke-width="1.6" aria-hidden="true">
+          <circle cx="7" cy="7" r="4.6"/><path d="M10.4 10.4 14 14"/>
+        </svg>
+        <input id="q" autocomplete="off" autofocus
+               aria-label="检索数据资产"
+               placeholder="描述你要找的数据，或直接输入表名片段">
+        <button class="clear" id="clear" type="button" aria-label="清空检索">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor"
+               stroke-width="2.2" stroke-linecap="round" aria-hidden="true">
+            <path d="M4 4 12 12M12 4 4 12"/>
+          </svg>
+        </button>
+        <span class="slash">/</span>
+      </div>
+      <button class="go" id="go">检索</button>
+    </div>
+    <div class="filters" id="filters" hidden></div>
+  </div>
+
+  <div class="degraded" id="degraded" hidden></div>
+  <div class="status" id="status" hidden></div>
+  <div id="out"></div>
+
+</div>
+
+<script nonce="{{ csp_nonce() }}">
+(function () {
+  'use strict';
+
+  var qEl = document.getElementById('q'),
+      wrapEl = document.querySelector('.inputwrap'),
+      clearEl = document.getElementById('clear'),
+      goEl = document.getElementById('go'),
+      outEl = document.getElementById('out'),
+      statusEl = document.getElementById('status'),
+      degradedEl = document.getElementById('degraded'),
+      filtersEl = document.getElementById('filters');
+
+  var EXAMPLES = ['客服首次响应时长', '会话转人工', '工单满意度评分',
+                  '每日活跃设备', 'ads_cs_chat'];
+  var SOURCES = [['', '全部'], ['llm', '待确认'], ['human', '已确认'],
+                 ['native', '原生']];
+  var COL_CHIP_LIMIT = 6;
+
+  var state = {
+    query: '',          // the query the current results belong to
+    rows: [],           // unfiltered results from the server
+    filters: { source: '', layer: '', db: '' },
+    selected: -1,       // keyboard cursor into the filtered list
+    open: {},           // key -> true for expanded cards
+    seq: 0              // request counter; stale responses are dropped
+  };
+
+  var lastStats = null;   // kept so returning to the landing page is instant
+
+  // -------------------------------------------------------------- theme
+  // Superset stores the chosen mode in localStorage. This page is same-origin
+  // with the dashboard that frames it, so the value is readable directly, and
+  // the storage event lets the iframe follow a change made in the parent.
+  var MODE_KEY = 'superset-theme-mode',
+      media = window.matchMedia('(prefers-color-scheme: dark)');
+
+  function applyTheme() {
+    var mode;
+    try { mode = localStorage.getItem(MODE_KEY); } catch (e) { mode = null; }
+    if (!mode || mode === 'system') mode = media.matches ? 'dark' : 'default';
+    var root = document.documentElement;
+    root.classList.toggle('dark', mode === 'dark');
+    root.classList.toggle('compact', mode === 'compact');
+  }
+  applyTheme();
+  window.addEventListener('storage', function (e) {
+    if (!e.key || e.key === MODE_KEY) applyTheme();
+  });
+  media.addEventListener('change', applyTheme);
+
+  // ------------------------------------------------------------ helpers
+  function esc(value) {
+    return String(value == null ? '' : value).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+
+  // Highlights the query inside a value without letting either side inject HTML.
+  function hl(value) {
+    var text = esc(value);
+    if (!state.query) return text;
+    var needle = state.query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    try {
+      return text.replace(new RegExp(needle, 'gi'), function (m) {
+        return '<mark>' + m + '</mark>';
+      });
+    } catch (e) { return text; }
+  }
+
+  function tag(source) {
+    if (source === 'native') return '<span class="tag native">原生</span>';
+    if (source === 'human') return '<span class="tag human">已确认</span>';
+    if (source === 'llm') return '<span class="tag llm">AI推断</span>';
+    return '';
+  }
+
+  function layerOf(row) {
+    var m = /^([a-z]+?)_/.exec(row.table_name || '');
+    return m ? m[1] : '其他';
+  }
+
+  function keyOf(row) { return row.db_name + '.' + row.table_name; }
+
+  function csrf() {
+    var el = document.querySelector('meta[name="csrf-token"]');
+    return el ? el.getAttribute('content') : '';
+  }
+
+  function get(url) {
+    return fetch(url, { credentials: 'same-origin' }).then(function (r) {
+      return r.json();
+    });
+  }
+
+  // ------------------------------------------------------------ landing
+  function landing(stats) {
+    var coverage = stats && stats.table_n
+      ? '已收录 <b>' + stats.table_n + '</b> 张表、<b>' + stats.column_n +
+        '</b> 个字段，其中 <b>' + stats.pending_n + '</b> 条说明待人工确认'
+      : '输入一句业务描述，或一段表名。';
+    outEl.innerHTML =
+      '<div class="landing">' +
+        '<h1>数据资产检索</h1>' +
+        '<p>' + coverage + '</p>' +
+        '<div class="examples"><span class="lab">试试</span>' +
+          EXAMPLES.map(function (e) {
+            return '<button class="chip" data-ex="' + esc(e) + '">' + esc(e) + '</button>';
+          }).join('') +
+        '</div>' +
+        '<div class="examples" style="margin-top:28px">' +
+          '<div class="legend">' +
+            '<span>' + tag('native') + '数据库原有说明</span>' +
+            '<span>' + tag('llm') + 'AI 推断，待确认</span>' +
+            '<span>' + tag('human') + '人工核对过</span>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+    outEl.querySelectorAll('[data-ex]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        qEl.value = btn.dataset.ex;
+        syncClear();
+        search();
+      });
+    });
+  }
+
+  // -------------------------------------------------------------- reset
+  function syncClear() {
+    wrapEl.classList.toggle('filled', qEl.value !== '');
+  }
+
+  // Back to the landing page: no query, no results, no filter bar. Bumping
+  // seq matters -- a search already in flight would otherwise paint its rows
+  // over the landing page when it lands.
+  function reset() {
+    clearTimeout(timer);
+    state.seq++;
+    state.query = '';
+    state.rows = [];
+    state.filters = { source: '', layer: '', db: '' };
+    state.selected = -1;
+    state.open = {};
+    qEl.value = '';
+    syncClear();
+    goEl.disabled = false;
+    filtersEl.hidden = true;
+    statusEl.hidden = true;
+    degradedEl.hidden = true;
+    landing(lastStats);
+    qEl.focus();
+  }
+
+  // ------------------------------------------------------------- search
+  var timer = null;
+  function schedule() {
+    clearTimeout(timer);
+    var text = qEl.value.trim();
+    if (text.length < 2) return;
+    timer = setTimeout(search, 350);
+  }
+
+  function search() {
+    clearTimeout(timer);
+    var text = qEl.value.trim();
+    if (!text) return;
+    var seq = ++state.seq,
+        started = Date.now();
+    state.query = text;
+    goEl.disabled = true;
+    statusEl.hidden = true;
+    filtersEl.hidden = true;
+    outEl.innerHTML = Array(5).join('x').split('x').map(function () {
+      return '<div class="card"><div class="sk"><span></span><em></em></div></div>';
+    }).join('');
+
+    get('/meta-search/api/search?q=' + encodeURIComponent(text))
+      .then(function (data) {
+        if (seq !== state.seq) return;      // a newer query already landed
+        goEl.disabled = false;
+        if (data.error) {
+          outEl.innerHTML = '<div class="empty">检索出错<div class="sub">' +
+                            esc(data.error) + '</div></div>';
+          return;
+        }
+        degradedEl.hidden = !!data.vector;
+        if (!data.vector) {
+          degradedEl.textContent =
+            '向量服务暂时不可用，已降级为关键词检索，结果可能不如平时准确。';
+        }
+        state.rows = data.results || [];
+        state.filters = { source: '', layer: '', db: '' };
+        state.selected = -1;
+        state.open = {};
+        renderFilters();
+        render(Date.now() - started, data.vector);
+      })
+      .catch(function (err) {
+        if (seq !== state.seq) return;
+        goEl.disabled = false;
+        outEl.innerHTML = '<div class="empty">请求失败<div class="sub">' +
+                          esc(err) + '</div></div>';
+      });
+  }
+
+  // ------------------------------------------------------------ filters
+  function distinct(pick) {
+    var seen = {}, out = [];
+    state.rows.forEach(function (row) {
+      var v = pick(row);
+      if (v && !seen[v]) { seen[v] = 1; out.push(v); }
+    });
+    return out.sort();
+  }
+
+  function renderFilters() {
+    if (!state.rows.length) { filtersEl.hidden = true; return; }
+    var layers = distinct(layerOf),
+        dbs = distinct(function (r) { return r.db_name; });
+
+    function group(label, key, options) {
+      return '<div class="fgroup"><span class="flabel">' + label + '</span>' +
+        options.map(function (opt) {
+          var value = opt[0], text = opt[1];
+          return '<button class="chip" data-k="' + key + '" data-v="' + esc(value) +
+                 '" aria-pressed="' + (state.filters[key] === value) + '">' +
+                 esc(text) + '</button>';
+        }).join('') + '</div>';
+    }
+
+    var html = group('来源', 'source', SOURCES);
+    // Only worth showing when there is actually something to choose between.
+    if (layers.length > 1) {
+      html += group('分层', 'layer', [['', '全部']].concat(layers.map(function (l) {
+        return [l, l];
+      })));
+    }
+    if (dbs.length > 1) {
+      html += group('库', 'db', [['', '全部']].concat(dbs.map(function (d) {
+        return [d, d];
+      })));
+    }
+    filtersEl.innerHTML = html;
+    filtersEl.hidden = false;
+    filtersEl.querySelectorAll('.chip').forEach(function (chip) {
+      chip.addEventListener('click', function () {
+        var key = chip.dataset.k;
+        state.filters[key] = state.filters[key] === chip.dataset.v ? '' : chip.dataset.v;
+        state.selected = -1;
+        renderFilters();
+        render();
+      });
+    });
+  }
+
+  function visible() {
+    var f = state.filters;
+    return state.rows.filter(function (row) {
+      if (f.source && (row.table_source || '') !== f.source) return false;
+      if (f.layer && layerOf(row) !== f.layer) return false;
+      if (f.db && row.db_name !== f.db) return false;
+      return true;
+    });
+  }
+
+  // ------------------------------------------------------------- render
+  function render(elapsed, vector) {
+    var rows = visible();
+
+    var bits = ['共 <b>' + rows.length + '</b> 张表'];
+    if (rows.length !== state.rows.length) {
+      bits.push('已从 ' + state.rows.length + ' 条中筛选');
+    }
+    if (vector !== undefined) bits.push(vector ? '向量检索' : '关键词检索');
+    if (elapsed !== undefined) bits.push(elapsed + ' ms');
+    statusEl.innerHTML = bits.join(' · ');
+    statusEl.hidden = false;
+
+    if (!rows.length) {
+      outEl.innerHTML = '<div class="empty">没有符合条件的表' +
+        '<div class="sub">换个说法，或放宽上面的筛选</div></div>';
+      return;
+    }
+
+    var top = state.rows[0] && state.rows[0].score || 1;
+    outEl.innerHTML = rows.map(function (row, i) {
+      return card(row, i, top);
+    }).join('');
+
+    outEl.querySelectorAll('.card').forEach(function (el, i) {
+      el.querySelector('.head').addEventListener('click', function () {
+        state.selected = i;
+        toggle(el, rows[i]);
+      });
+      var more = el.querySelector('.more');
+      if (more) {
+        more.addEventListener('click', function (ev) {
+          ev.stopPropagation();
+          var hidden = el.querySelectorAll('.colchip[hidden]');
+          hidden.forEach(function (c) { c.hidden = false; });
+          more.remove();
+        });
+      }
+      if (state.open[keyOf(rows[i])]) toggle(el, rows[i], true);
+    });
+    paintSelection();
+  }
+
+  function card(row, index, top) {
+    var cols = (row.hit_columns || '').split(',').filter(Boolean),
+        ratio = top ? row.score / top : 0,
+        lit = Math.max(1, Math.round(ratio * 5));
+
+    var chips = cols.map(function (name, i) {
+      return '<span class="colchip"' + (i >= COL_CHIP_LIMIT ? ' hidden' : '') +
+             '>' + hl(name) + '</span>';
+    }).join('');
+    if (cols.length > COL_CHIP_LIMIT) {
+      chips += '<button class="more">+' + (cols.length - COL_CHIP_LIMIT) + ' 更多</button>';
+    }
+
+    var bars = '';
+    for (var b = 0; b < 5; b++) bars += '<i class="' + (b < lit ? 'on' : '') + '"></i>';
+
+    return '<div class="card" data-i="' + index + '">' +
+      '<div class="head">' +
+        '<div class="line1">' +
+          '<span class="caret">&#9654;</span>' +
+          '<span class="name"><span class="prefix">' + hl(row.db_name) + '.</span>' +
+            '<span class="tname">' + hl(row.table_name) + '</span></span>' +
+          tag(row.table_source) +
+          '<span class="spacer"></span>' +
+          '<span class="relevance" title="相关度 ' + row.score + '">' +
+            '<span class="bars">' + bars + '</span>' +
+            '<span class="rlabel">' + Math.round(ratio * 100) + '%</span>' +
+          '</span>' +
+        '</div>' +
+        '<div class="line2">' +
+          '<span class="desc' + (row.table_comment ? '' : ' none') + '">' +
+            hl(row.table_comment || '暂无说明') + '</span>' +
+          '<span class="spacer"></span>' +
+          '<span class="fieldn">' + row.column_n + ' 字段</span>' +
+        '</div>' +
+        (cols.length ? '<div class="line3"><span class="lab">命中字段</span>' +
+                       chips + '</div>' : '') +
+      '</div>' +
+    '</div>';
+  }
+
+  // ------------------------------------------------------------ columns
+  function toggle(el, row, force) {
+    var open = el.querySelector('.cols');
+    if (open && !force) {
+      open.remove();
+      el.classList.remove('open');
+      delete state.open[keyOf(row)];
+      return;
+    }
+    if (open) return;
+    el.classList.add('open');
+    state.open[keyOf(row)] = true;
+
+    var box = document.createElement('div');
+    box.className = 'cols';
+    box.innerHTML = '<div class="sk" style="padding:14px"><span></span><em></em></div>';
+    el.appendChild(box);
+
+    get('/meta-search/api/columns?db=' + encodeURIComponent(row.db_name) +
+        '&table=' + encodeURIComponent(row.table_name))
+      .then(function (data) {
+        var cols = data.columns || [];
+        if (!cols.length) {
+          box.innerHTML = '<div class="empty">没有字段信息</div>';
+          return;
+        }
+        box.innerHTML =
+          '<table>' +
+          '<colgroup><col class="c-name"><col class="c-type"><col>' +
+          '<col class="c-src"><col class="c-act"></colgroup>' +
+          '<thead><tr><th>字段</th><th>类型</th><th>说明</th>' +
+          '<th>来源</th><th></th></tr></thead><tbody>' +
+          cols.map(function (col) {
+            return '<tr data-id="' + col.id + '">' +
+              '<td class="cname">' + hl(col.column_name) + '</td>' +
+              '<td><span class="dtype">' + esc(col.data_type) + '</span></td>' +
+              '<td><div class="cedit">' +
+                '<span class="cm" contenteditable="true" role="textbox">' +
+                  esc(col.comment) + '</span>' +
+                '<svg class="pencil" viewBox="0 0 16 16" fill="none" ' +
+                  'stroke="currentColor" stroke-width="1.5" aria-hidden="true">' +
+                  '<path d="M11.3 2.3 13.7 4.7 5.4 13H3v-2.4z"/></svg>' +
+              '</div></td>' +
+              '<td class="src">' + tag(col.comment_source) + '</td>' +
+              '<td><button class="save">确认</button></td>' +
+            '</tr>';
+          }).join('') + '</tbody></table>';
+
+        box.querySelectorAll('tr[data-id]').forEach(function (tr) {
+          var cm = tr.querySelector('.cm'),
+              btn = tr.querySelector('.save'),
+              original = cm.textContent.trim();
+          btn.addEventListener('click', function () { save(tr, cm, btn); });
+          cm.addEventListener('keydown', function (ev) {
+            if (ev.key === 'Enter') { ev.preventDefault(); save(tr, cm, btn); }
+            if (ev.key === 'Escape') { cm.textContent = original; cm.blur(); }
+          });
+          cm.addEventListener('click', function (ev) { ev.stopPropagation(); });
+        });
+      })
+      .catch(function () {
+        box.innerHTML = '<div class="empty">字段加载失败</div>';
+      });
+  }
+
+  function save(tr, cm, btn) {
+    var text = cm.textContent.trim();
+    if (!text) { cm.focus(); return; }
+    btn.disabled = true;
+    btn.className = 'save';
+    btn.textContent = '保存中';
+    fetch('/meta-search/api/confirm', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() },
+      body: JSON.stringify({ id: Number(tr.dataset.id), comment: text })
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data.ok) {
+          btn.className = 'save done';
+          btn.textContent = '已确认';
+          tr.querySelector('.src').innerHTML = tag('human');
+        } else { fail(btn); }
+      })
+      .catch(function () { fail(btn); });
+  }
+
+  function fail(btn) {
+    btn.disabled = false;
+    btn.className = 'save err';
+    btn.textContent = '重试';
+  }
+
+  // ----------------------------------------------------------- keyboard
+  function paintSelection() {
+    outEl.querySelectorAll('.card').forEach(function (el, i) {
+      el.classList.toggle('sel', i === state.selected);
+    });
+  }
+
+  function move(step) {
+    var cards = outEl.querySelectorAll('.card');
+    if (!cards.length) return;
+    state.selected = Math.max(0, Math.min(cards.length - 1, state.selected + step));
+    paintSelection();
+    cards[state.selected].scrollIntoView({ block: 'nearest' });
+  }
+
+  document.addEventListener('keydown', function (ev) {
+    var typing = ev.target === qEl || ev.target.isContentEditable;
+    if (ev.key === '/' && !typing) { ev.preventDefault(); qEl.focus(); qEl.select(); return; }
+    if (typing && ev.target !== qEl) return;
+    if (ev.key === 'ArrowDown') { ev.preventDefault(); move(1); }
+    else if (ev.key === 'ArrowUp') { ev.preventDefault(); move(-1); }
+    else if (ev.key === 'Enter' && ev.target !== qEl && state.selected >= 0) {
+      ev.preventDefault();
+      var rows = visible();
+      toggle(outEl.querySelectorAll('.card')[state.selected], rows[state.selected]);
+    }
+  });
+
+  // --------------------------------------------------------------- boot
+  goEl.addEventListener('click', search);
+  clearEl.addEventListener('click', reset);
+  qEl.addEventListener('input', function () {
+    syncClear();
+    if (!qEl.value) { reset(); return; }
+    schedule();
+  });
+  qEl.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Enter') { ev.preventDefault(); search(); }
+    else if (ev.key === 'Escape') { ev.preventDefault(); reset(); }
+    else if (ev.key === 'ArrowDown') { ev.preventDefault(); qEl.blur(); move(1); }
+  });
+
+  get('/meta-search/api/stats')
+    .then(function (s) { lastStats = s; landing(s); })
+    .catch(function () { landing(null); });
+})();
+</script>
+</body>
+</html>
