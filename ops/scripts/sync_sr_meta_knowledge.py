@@ -55,15 +55,16 @@ SKIP_SCHEMAS = ("information_schema", "_statistics_", "sys", "sys_catalog")
 SKIP_TABLE_PREFIXES = ("_tmp_", "tmp_", "temp_", "bak_", "test_")
 SKIP_TABLE_SUFFIXES = ("_tmp", "_bak", "_backup", "_old", "_copy")
 
-EMBED_BASE = os.environ.get("EMBED_BASE_URL", "https://api.siliconflow.cn/v1")
+EMBED_BASE = os.environ.get("EMBED_BASE_URL", "https://agi-newapi.bluetti.com/v1")
 EMBED_KEY = os.environ.get("EMBED_API_KEY", "")
+# Must stay the model the stored vectors were built with, or scores are noise.
 EMBED_MODEL = os.environ.get("EMBED_MODEL", "BAAI/bge-m3")
 EMBED_DIM = int(os.environ.get("EMBED_DIM", "1024"))
 EMBED_BATCH = int(os.environ.get("EMBED_BATCH", "32"))
 
-# The self-hosted OneAPI gateway has no working channel (503 for every model),
-# so both the chat and the embedding call go to SiliconFlow on the same key.
-LLM_BASE = os.environ.get("LLM_BASE_URL", "https://api.siliconflow.cn/v1")
+# Chat and embedding share the in-house NewAPI gateway and the same key; it
+# fronts SiliconFlow, so bge-m3 vectors stay comparable with the stored ones.
+LLM_BASE = os.environ.get("LLM_BASE_URL", "https://agi-newapi.bluetti.com/v1")
 LLM_KEY = os.environ.get("LLM_API_KEY", "")
 LLM_MODEL = os.environ.get("LLM_MODEL", "Pro/deepseek-ai/DeepSeek-V3")
 LLM_WORKERS = int(os.environ.get("LLM_WORKERS", "4"))

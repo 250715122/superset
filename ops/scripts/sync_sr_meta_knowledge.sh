@@ -16,13 +16,12 @@ BASE_DIR=${BASE_DIR:-$(cd "$(dirname "$0")" && pwd)}
 [ -f "$BASE_DIR/.meta_kb_env" ] && . "$BASE_DIR/.meta_kb_env"
 
 export SUPERSET_CONFIG_PATH=${SUPERSET_CONFIG_PATH:-$BASE_DIR/superset_config.py}
-export EMBED_BASE_URL=${EMBED_BASE_URL:-https://api.siliconflow.cn/v1}
+export EMBED_BASE_URL=${EMBED_BASE_URL:-https://agi-newapi.bluetti.com/v1}
 export EMBED_MODEL=${EMBED_MODEL:-BAAI/bge-m3}
 export EMBED_DIM=${EMBED_DIM:-1024}
 export EMBED_API_KEY=${EMBED_API_KEY:?EMBED_API_KEY not set (expected in $BASE_DIR/.meta_kb_env)}
-# The self-hosted OneAPI gateway returns 503 for every model, so inference
-# shares the SiliconFlow endpoint and key with the embedding call.
-export LLM_BASE_URL=${LLM_BASE_URL:-https://api.siliconflow.cn/v1}
+# Inference shares the gateway endpoint and key with the embedding call.
+export LLM_BASE_URL=${LLM_BASE_URL:-https://agi-newapi.bluetti.com/v1}
 export LLM_MODEL=${LLM_MODEL:-Pro/deepseek-ai/DeepSeek-V3}
 export LLM_API_KEY=${LLM_API_KEY:?LLM_API_KEY not set (expected in $BASE_DIR/.meta_kb_env)}
 

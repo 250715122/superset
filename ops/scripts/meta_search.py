@@ -62,8 +62,9 @@ def _load_env():
 
 _load_env()
 
-EMBED_BASE = os.environ.get("EMBED_BASE_URL", "https://api.siliconflow.cn/v1")
+EMBED_BASE = os.environ.get("EMBED_BASE_URL", "https://agi-newapi.bluetti.com/v1")
 EMBED_KEY = os.environ.get("EMBED_API_KEY", "")
+# Must stay the model the stored vectors were built with, or scores are noise.
 EMBED_MODEL = os.environ.get("EMBED_MODEL", "BAAI/bge-m3")
 EMBED_TIMEOUT = float(os.environ.get("EMBED_TIMEOUT", "3"))
 DATABASE_ID = int(os.environ.get("META_KB_DATABASE_ID", "12"))
