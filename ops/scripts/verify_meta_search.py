@@ -145,6 +145,26 @@ for query in ["客服首次响应时长", "会话转人工", "ads_cs_chat"]:
     check("检索「%s」" % query, resp.status_code == 200 and len(rows) > 0,
           "%d 条, 向量=%s, 首位 %s" % (len(rows), body.get("vector"), top))
 
+# -------------------------------------------------------------- field search
+resp = sess.get("%s/meta-search/api/search?mode=column&q=%s"
+                % (BASE, urllib.parse.quote("退款金额")), timeout=40)
+body = resp.json() if resp.status_code == 200 else {}
+fields = body.get("results") or []
+top = ("%s.%s" % (fields[0]["table_name"], fields[0]["column_name"])
+       if fields else "无结果")
+check("按字段检索",
+      resp.status_code == 200 and len(fields) > 0
+      and all(f.get("column_name") and f.get("id") for f in fields),
+      "%d 条, 模式=%s, 首位 %s" % (len(fields), body.get("mode"), top))
+
+# A colon used to reach SQLAlchemy's text() as a bind parameter and take the
+# whole request down; the space exercises the per-word keyword match.
+resp = sess.get("%s/meta-search/api/search?q=%s"
+                % (BASE, urllib.parse.quote("order_refund 退款:30")), timeout=40)
+check("多词且带冒号的查询不报错",
+      resp.status_code == 200 and "error" not in (resp.json() or {}),
+      "HTTP %s" % resp.status_code)
+
 # ------------------------------------------------------------------- columns
 resp = sess.get("%s/meta-search/api/search?q=%s"
                 % (BASE, urllib.parse.quote("客服会话")), timeout=40)

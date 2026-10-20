@@ -105,8 +105,24 @@ button { font-family:inherit; }
 .go:hover:not(:disabled) { background:var(--accent-hover); }
 .go:disabled { opacity:.55; cursor:default; }
 
-/* -------------------------------------------------------------- filters */
-.filters { display:flex; flex-wrap:wrap; gap:16px; margin-top:12px; }
+/* ----------------------------------------------------------- mode + filters */
+.subbar { display:flex; align-items:center; flex-wrap:wrap; gap:16px; margin-top:12px; }
+.modes {
+  display:inline-flex; flex:none; gap:2px; padding:2px;
+  background:var(--surface-2); border:1px solid var(--border);
+  border-radius:var(--radius);
+}
+.mode {
+  font-size:var(--fs-sm); line-height:22px; padding:0 12px; cursor:pointer;
+  border:0; border-radius:var(--radius-sm); background:none; color:var(--text-2);
+  transition:background .12s, color .12s;
+}
+.mode:hover { color:var(--text-1); }
+.mode[aria-pressed="true"] {
+  background:var(--surface-1); color:var(--accent); font-weight:500;
+  box-shadow:var(--shadow);
+}
+.filters { display:flex; flex-wrap:wrap; gap:16px; }
 .fgroup { display:flex; align-items:center; gap:6px; }
 .flabel { font-size:var(--fs-sm); color:var(--text-3); }
 .chip {
@@ -184,10 +200,7 @@ button { font-family:inherit; }
   background:var(--surface-2); color:var(--text-2);
   border:1px solid var(--border);
 }
-.more {
-  font-size:var(--fs-xs); color:var(--accent); cursor:pointer;
-  background:none; border:0; padding:0 4px;
-}
+.morelab { font-size:var(--fs-xs); color:var(--text-3); padding:0 4px; }
 
 /* ----------------------------------------------------------------- tags */
 .tag {
@@ -200,9 +213,17 @@ button { font-family:inherit; }
 
 /* -------------------------------------------------------------- columns */
 .cols { border-top:1px solid var(--border); background:var(--surface-2); }
+/* The same table, standing on its own as the whole result of a field search. */
+.cols.flat { border-top:0; background:var(--surface-1); }
 table { width:100%; border-collapse:collapse; table-layout:fixed; }
-col.c-name { width:26%; } col.c-type { width:11%; }
+col.c-name { width:22%; } col.c-type { width:10%; }
+col.c-tbl { width:26%; } col.c-rel { width:62px; }
 col.c-src { width:88px; } col.c-act { width:76px; }
+td.ctbl {
+  font-family:var(--mono); font-size:var(--fs-sm); color:var(--text-2);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+td.crel { font-size:var(--fs-xs); color:var(--text-3); text-align:right; }
 th {
   text-align:left; font-weight:500; font-size:var(--fs-xs); color:var(--text-3);
   padding:8px 14px; border-bottom:1px solid var(--border);
@@ -292,7 +313,13 @@ mark { background:var(--mark-bg); color:var(--mark-fg); padding:0 2px; border-ra
       </div>
       <button class="go" id="go">检索</button>
     </div>
-    <div class="filters" id="filters" hidden></div>
+    <div class="subbar">
+      <div class="modes" id="modes">
+        <button class="mode" type="button" data-m="table" aria-pressed="true">按表</button>
+        <button class="mode" type="button" data-m="column" aria-pressed="false">按字段</button>
+      </div>
+      <div class="filters" id="filters" hidden></div>
+    </div>
   </div>
 
   <div class="degraded" id="degraded" hidden></div>
@@ -312,15 +339,19 @@ mark { background:var(--mark-bg); color:var(--mark-fg); padding:0 2px; border-ra
       outEl = document.getElementById('out'),
       statusEl = document.getElementById('status'),
       degradedEl = document.getElementById('degraded'),
-      filtersEl = document.getElementById('filters');
+      filtersEl = document.getElementById('filters'),
+      modesEl = document.getElementById('modes');
 
-  var EXAMPLES = ['客服首次响应时长', '会话转人工', '工单满意度评分',
-                  '每日活跃设备', 'ads_cs_chat'];
+  var EXAMPLES = {
+    table: ['客服首次响应时长', '会话转人工', '工单满意度评分',
+            '每日活跃设备', 'ads_cs_chat'],
+    column: ['退款金额', '设备序列号', '剩余电量', '物流单号', 'session_id']
+  };
   var SOURCES = [['', '全部'], ['llm', '待确认'], ['human', '已确认'],
                  ['native', '原生']];
-  var COL_CHIP_LIMIT = 6;
 
   var state = {
+    mode: 'table',      // 'table' -> one row per table, 'column' -> per field
     query: '',          // the query the current results belong to
     rows: [],           // unfiltered results from the server
     filters: { source: '', layer: '', db: '' },
@@ -360,12 +391,16 @@ mark { background:var(--mark-bg); color:var(--mark-fg); padding:0 2px; border-ra
   }
 
   // Highlights the query inside a value without letting either side inject HTML.
+  // A multi-word query is also highlighted word by word, the same way the
+  // server scores it, so `order_refund 退款` lights up both halves.
   function hl(value) {
     var text = esc(value);
     if (!state.query) return text;
-    var needle = state.query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    var words = state.query.split(/[\s,，、/\\|;；:：]+/).filter(Boolean),
+        needles = (words.length > 1 ? [state.query].concat(words) : [state.query])
+          .map(function (w) { return w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); });
     try {
-      return text.replace(new RegExp(needle, 'gi'), function (m) {
+      return text.replace(new RegExp(needles.join('|'), 'gi'), function (m) {
         return '<mark>' + m + '</mark>';
       });
     } catch (e) { return text; }
@@ -381,6 +416,11 @@ mark { background:var(--mark-bg); color:var(--mark-fg); padding:0 2px; border-ra
   function layerOf(row) {
     var m = /^([a-z]+?)_/.exec(row.table_name || '');
     return m ? m[1] : '其他';
+  }
+
+  // A table row carries the table's own comment source, a field row its own.
+  function sourceOf(row) {
+    return (state.mode === 'column' ? row.comment_source : row.table_source) || '';
   }
 
   function keyOf(row) { return row.db_name + '.' + row.table_name; }
@@ -407,7 +447,7 @@ mark { background:var(--mark-bg); color:var(--mark-fg); padding:0 2px; border-ra
         '<h1>数据资产检索</h1>' +
         '<p>' + coverage + '</p>' +
         '<div class="examples"><span class="lab">试试</span>' +
-          EXAMPLES.map(function (e) {
+          EXAMPLES[state.mode].map(function (e) {
             return '<button class="chip" data-ex="' + esc(e) + '">' + esc(e) + '</button>';
           }).join('') +
         '</div>' +
@@ -477,7 +517,8 @@ mark { background:var(--mark-bg); color:var(--mark-fg); padding:0 2px; border-ra
       return '<div class="card"><div class="sk"><span></span><em></em></div></div>';
     }).join('');
 
-    get('/meta-search/api/search?q=' + encodeURIComponent(text))
+    get('/meta-search/api/search?mode=' + state.mode +
+        '&q=' + encodeURIComponent(text))
       .then(function (data) {
         if (seq !== state.seq) return;      // a newer query already landed
         goEl.disabled = false;
@@ -559,7 +600,7 @@ mark { background:var(--mark-bg); color:var(--mark-fg); padding:0 2px; border-ra
   function visible() {
     var f = state.filters;
     return state.rows.filter(function (row) {
-      if (f.source && (row.table_source || '') !== f.source) return false;
+      if (f.source && sourceOf(row) !== f.source) return false;
       if (f.layer && layerOf(row) !== f.layer) return false;
       if (f.db && row.db_name !== f.db) return false;
       return true;
@@ -568,9 +609,10 @@ mark { background:var(--mark-bg); color:var(--mark-fg); padding:0 2px; border-ra
 
   // ------------------------------------------------------------- render
   function render(elapsed, vector) {
-    var rows = visible();
+    var rows = visible(),
+        unit = state.mode === 'column' ? '个字段' : '张表';
 
-    var bits = ['共 <b>' + rows.length + '</b> 张表'];
+    var bits = ['共 <b>' + rows.length + '</b> ' + unit];
     if (rows.length !== state.rows.length) {
       bits.push('已从 ' + state.rows.length + ' 条中筛选');
     }
@@ -580,10 +622,12 @@ mark { background:var(--mark-bg); color:var(--mark-fg); padding:0 2px; border-ra
     statusEl.hidden = false;
 
     if (!rows.length) {
-      outEl.innerHTML = '<div class="empty">没有符合条件的表' +
+      outEl.innerHTML = '<div class="empty">没有符合条件的' + unit.slice(1) +
         '<div class="sub">换个说法，或放宽上面的筛选</div></div>';
       return;
     }
+
+    if (state.mode === 'column') { renderColumnResults(rows); return; }
 
     var top = state.rows[0] && state.rows[0].score || 1;
     outEl.innerHTML = rows.map(function (row, i) {
@@ -595,32 +639,23 @@ mark { background:var(--mark-bg); color:var(--mark-fg); padding:0 2px; border-ra
         state.selected = i;
         toggle(el, rows[i]);
       });
-      var more = el.querySelector('.more');
-      if (more) {
-        more.addEventListener('click', function (ev) {
-          ev.stopPropagation();
-          var hidden = el.querySelectorAll('.colchip[hidden]');
-          hidden.forEach(function (c) { c.hidden = false; });
-          more.remove();
-        });
-      }
       if (state.open[keyOf(rows[i])]) toggle(el, rows[i], true);
     });
     paintSelection();
   }
 
   function card(row, index, top) {
-    var cols = (row.hit_columns || '').split(',').filter(Boolean),
+    // The server sends the best few matches already ranked, plus how many
+    // matched in total, so a wide table does not spray forty chips here.
+    var cols = row.hit_columns || [],
+        rest = Math.max(0, (row.hit_n || 0) - cols.length),
         ratio = top ? row.score / top : 0,
         lit = Math.max(1, Math.round(ratio * 5));
 
-    var chips = cols.map(function (name, i) {
-      return '<span class="colchip"' + (i >= COL_CHIP_LIMIT ? ' hidden' : '') +
-             '>' + hl(name) + '</span>';
+    var chips = cols.map(function (name) {
+      return '<span class="colchip">' + hl(name) + '</span>';
     }).join('');
-    if (cols.length > COL_CHIP_LIMIT) {
-      chips += '<button class="more">+' + (cols.length - COL_CHIP_LIMIT) + ' 更多</button>';
-    }
+    if (rest) chips += '<span class="morelab">另有 ' + rest + ' 列相关</span>';
 
     var bars = '';
     for (var b = 0; b < 5; b++) bars += '<i class="' + (b < lit ? 'on' : '') + '"></i>';
@@ -648,6 +683,42 @@ mark { background:var(--mark-bg); color:var(--mark-fg); padding:0 2px; border-ra
                        chips + '</div>' : '') +
       '</div>' +
     '</div>';
+  }
+
+  // ------------------------------------------------- field search results
+  // One flat ranked list instead of cards: in this mode the field is the
+  // answer and the table it lives in is just context, so there is nothing to
+  // expand. Comments stay editable here for the same reason they are under a
+  // table -- the moment you notice a wrong one is the moment to fix it.
+  function renderColumnResults(rows) {
+    var top = state.rows[0] && state.rows[0].score || 1;
+    outEl.innerHTML =
+      '<div class="card"><div class="cols flat"><table>' +
+      '<colgroup><col class="c-name"><col class="c-type"><col>' +
+      '<col class="c-tbl"><col class="c-src"><col class="c-rel">' +
+      '<col class="c-act"></colgroup>' +
+      '<thead><tr><th>字段</th><th>类型</th><th>说明</th><th>所在表</th>' +
+      '<th>来源</th><th>相关</th><th></th></tr></thead><tbody>' +
+      rows.map(function (row) {
+        return '<tr data-id="' + row.id + '">' +
+          '<td class="cname">' + hl(row.column_name) + '</td>' +
+          '<td><span class="dtype">' + esc(row.data_type) + '</span></td>' +
+          '<td><div class="cedit">' +
+            '<span class="cm" contenteditable="true" role="textbox">' +
+              esc(row.comment) + '</span>' +
+            '<svg class="pencil" viewBox="0 0 16 16" fill="none" ' +
+              'stroke="currentColor" stroke-width="1.5" aria-hidden="true">' +
+              '<path d="M11.3 2.3 13.7 4.7 5.4 13H3v-2.4z"/></svg>' +
+          '</div></td>' +
+          '<td class="ctbl" title="' + esc(row.db_name + '.' + row.table_name) +
+            '">' + hl(row.table_name) + '</td>' +
+          '<td class="src">' + tag(row.comment_source) + '</td>' +
+          '<td class="crel">' + Math.round((top ? row.score / top : 0) * 100) +
+            '%</td>' +
+          '<td><button class="save">确认</button></td>' +
+        '</tr>';
+      }).join('') + '</tbody></table></div></div>';
+    wireComments(outEl);
   }
 
   // ------------------------------------------------------------ columns
@@ -698,21 +769,25 @@ mark { background:var(--mark-bg); color:var(--mark-fg); padding:0 2px; border-ra
             '</tr>';
           }).join('') + '</tbody></table>';
 
-        box.querySelectorAll('tr[data-id]').forEach(function (tr) {
-          var cm = tr.querySelector('.cm'),
-              btn = tr.querySelector('.save'),
-              original = cm.textContent.trim();
-          btn.addEventListener('click', function () { save(tr, cm, btn); });
-          cm.addEventListener('keydown', function (ev) {
-            if (ev.key === 'Enter') { ev.preventDefault(); save(tr, cm, btn); }
-            if (ev.key === 'Escape') { cm.textContent = original; cm.blur(); }
-          });
-          cm.addEventListener('click', function (ev) { ev.stopPropagation(); });
-        });
+        wireComments(box);
       })
       .catch(function () {
         box.innerHTML = '<div class="empty">字段加载失败</div>';
       });
+  }
+
+  function wireComments(root) {
+    root.querySelectorAll('tr[data-id]').forEach(function (tr) {
+      var cm = tr.querySelector('.cm'),
+          btn = tr.querySelector('.save'),
+          original = cm.textContent.trim();
+      btn.addEventListener('click', function () { save(tr, cm, btn); });
+      cm.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Enter') { ev.preventDefault(); save(tr, cm, btn); }
+        if (ev.key === 'Escape') { cm.textContent = original; cm.blur(); }
+      });
+      cm.addEventListener('click', function (ev) { ev.stopPropagation(); });
+    });
   }
 
   function save(tr, cm, btn) {
@@ -751,6 +826,7 @@ mark { background:var(--mark-bg); color:var(--mark-fg); padding:0 2px; border-ra
   }
 
   function move(step) {
+    if (state.mode === 'column') return;   // one card, nothing to walk through
     var cards = outEl.querySelectorAll('.card');
     if (!cards.length) return;
     state.selected = Math.max(0, Math.min(cards.length - 1, state.selected + step));
@@ -764,7 +840,8 @@ mark { background:var(--mark-bg); color:var(--mark-fg); padding:0 2px; border-ra
     if (typing && ev.target !== qEl) return;
     if (ev.key === 'ArrowDown') { ev.preventDefault(); move(1); }
     else if (ev.key === 'ArrowUp') { ev.preventDefault(); move(-1); }
-    else if (ev.key === 'Enter' && ev.target !== qEl && state.selected >= 0) {
+    else if (ev.key === 'Enter' && ev.target !== qEl && state.selected >= 0
+             && state.mode === 'table') {
       ev.preventDefault();
       var rows = visible();
       toggle(outEl.querySelectorAll('.card')[state.selected], rows[state.selected]);
@@ -772,6 +849,25 @@ mark { background:var(--mark-bg); color:var(--mark-fg); padding:0 2px; border-ra
   });
 
   // --------------------------------------------------------------- boot
+  modesEl.querySelectorAll('.mode').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      if (state.mode === btn.dataset.m) return;
+      state.mode = btn.dataset.m;
+      modesEl.querySelectorAll('.mode').forEach(function (other) {
+        other.setAttribute('aria-pressed', String(other === btn));
+      });
+      // The two modes return different shapes, so results from the old one
+      // cannot simply be re-rendered; re-ask, or go back to the landing page.
+      state.rows = [];
+      state.filters = { source: '', layer: '', db: '' };
+      state.selected = -1;
+      state.open = {};
+      filtersEl.hidden = true;
+      if (qEl.value.trim()) { search(); }
+      else { statusEl.hidden = true; landing(lastStats); }
+    });
+  });
+
   goEl.addEventListener('click', search);
   clearEl.addEventListener('click', reset);
   qEl.addEventListener('input', function () {

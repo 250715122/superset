@@ -25,6 +25,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -211,17 +212,27 @@ def row_id(db, table, column):
     return int(hashlib.sha1(key.encode("utf-8")).hexdigest()[:15], 16)
 
 
-def build_search_text(db, table, column, dtype, comment, siblings):
+def build_search_text(db, table, column, comment, siblings):
     """What gets embedded and keyword-matched.
 
-    Includes sibling column names so a table-level query like 会话留存 can hit a
-    table through its columns even when the table comment is thin.
+    A column is described by its own name and comment, nothing else. Naming the
+    table on every column row gives all of them the same "this is about refunds"
+    signal, which lifts the unrelated ones and narrows the gap to the ones the
+    query is actually about; it also makes the keyword half fire on every column
+    of a table whose name merely contains the query as a substring, so searching
+    order_no returns remark and handler out of recycle_order_node. The data type
+    is dropped for the same reason: VARCHAR describes nothing a searcher asks for.
+
+    The table row keeps the qualified name, and its sibling column names, so a
+    table-level query like 会话留存 still reaches a table through its columns even
+    when the table comment is thin.
     """
-    parts = ["%s.%s" % (db, table)]
     if column:
-        parts.append(column)
-        if dtype:
-            parts.append(dtype)
+        parts = [column]
+        if comment:
+            parts.append(comment)
+        return " | ".join(parts)[:4000]
+    parts = ["%s.%s" % (db, table)]
     if comment:
         parts.append(comment)
     if siblings:
@@ -353,6 +364,20 @@ def sql_str(value):
     return "'%s'" % str(value).replace("\\", "\\\\").replace("'", "\\'")
 
 
+_BIND_COLON = re.compile(r":(?=\w)")
+
+
+def statement(sql):
+    """A statement whose colons cannot be mistaken for bind parameters.
+
+    Every value is already an inlined literal, but text() reads a `:32` inside
+    a comment as a placeholder and refuses the whole INSERT -- one LLM writing
+    引用数: 32 is enough to lose a table. The backslashes do not survive into
+    the value MySQL sees.
+    """
+    return text(_BIND_COLON.sub(r"\\:", sql))
+
+
 def upsert(conn, rows):
     """Write rows in chunks. PRIMARY KEY tables treat INSERT as upsert."""
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -368,7 +393,7 @@ def upsert(conn, rows):
                 sql_str(r["search_text"]), vec, sql_str(r["content_hash"]),
                 sql_str(now),
             ))
-        conn.execute(text(
+        conn.execute(statement(
             "INSERT INTO %s (id, obj_type, db_name, table_name, column_name, "
             "data_type, `comment`, comment_source, confidence, search_text, "
             "embedding, content_hash, updated_at) VALUES %s"
@@ -423,8 +448,7 @@ def run(cmd, limit):
                 for r in rows:
                     merge_known_comment(r, known)
                     st = build_search_text(r["db"], r["table"], r["column"],
-                                           r["data_type"], r["comment"],
-                                           r.get("siblings"))
+                                           r["comment"], r.get("siblings"))
                     h = hashlib.sha1(st.encode("utf-8")).hexdigest()
                     if known.get(r["id"], {}).get("hash") != h:
                         changed += 1
@@ -497,8 +521,8 @@ def run(cmd, limit):
                             r["comment"], r["confidence"] = inferred[r["id"]]
                             r["source"] = "llm"
                         r["search_text"] = build_search_text(
-                            r["db"], r["table"], r["column"], r["data_type"],
-                            r["comment"], r.get("siblings"))
+                            r["db"], r["table"], r["column"], r["comment"],
+                            r.get("siblings"))
                         r["content_hash"] = hashlib.sha1(
                             r["search_text"].encode("utf-8")).hexdigest()
                         if known.get(r["id"], {}).get("hash") != r["content_hash"]:

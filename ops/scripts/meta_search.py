@@ -40,8 +40,24 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # embeddings of Chinese prose and English abbreviations line up poorly.
 W_VEC = 0.7
 W_KW = 0.3
-COLUMN_HIT = 0.5   # a column is "matched" at or above this similarity
+# A table is as good as its best evidence, plus a little for having a second
+# kind: a table whose own comment matches *and* which holds a matching column
+# should outrank one that only does either, without a column-only match being
+# pushed below a mediocre table-only one, which is what averaging would do.
+COMBO = 0.15
+# Column evidence is discounted before it competes with table evidence. A
+# column embeds as a handful of words, a table as a name plus a comment plus
+# every column name it has, and a short query is simply closer to short text,
+# so the two similarities are not on one scale. Without this a table full of
+# plausible-sounding columns outranks the table whose own comment says exactly
+# what the query asked for.
+COL_WEIGHT = 0.8
+COLUMN_HIT = 0.45  # below this a column is noise, as a chip or as a result
 MIN_SCORE = 0.3    # below this a table is noise
+KW_ONLY_FLOOR = 0.01  # keyword-only mode: anything the text literally contains
+HIT_CHIPS = 6      # matched columns shown on a table row; the rest are counted
+MAX_TOKENS = 6
+MAX_GRAMS = 8      # character pairs tried when keyword search is on its own
 MAX_ROWS = 50
 MAX_QUERY_LEN = 200
 
@@ -82,6 +98,65 @@ def like_literal(value):
     escaped = (str(value).replace("\\", "\\\\").replace("'", "\\'")
                .replace("%", "\\%").replace("_", "\\_"))
     return "'%%%s%%'" % escaped
+
+
+_BIND_COLON = re.compile(r":(?=\w)")
+
+
+def _statement(sql):
+    """A statement whose colons cannot be mistaken for bind parameters.
+
+    Everything user-supplied is an inlined literal by the time it gets here,
+    but text() reads the `:30` in a search for 超时:30 as a placeholder and
+    refuses the request. Escaping the colons leaves text() doing the one thing
+    that is wanted from it, doubling the `%` that LIKE patterns are made of,
+    which the driver would otherwise take for a format string. The backslashes
+    do not survive into the value MySQL sees.
+    """
+    from sqlalchemy import text
+
+    return text(_BIND_COLON.sub(r"\\:", sql))
+
+
+# ------------------------------------------------------------------- scoring
+
+_TOKEN_SPLIT = re.compile(r"[\s,，、/\\|;；:：]+")
+
+
+def _like(value):
+    return "CASE WHEN LOWER(search_text) LIKE LOWER(%s) THEN 1 ELSE 0 END" \
+           % like_literal(value)
+
+
+def _share(whole, parts):
+    """A contiguous hit on the whole query, or else how much of it was found."""
+    return "GREATEST(%s, (%s) / %d.0)" % (
+        whole, " + ".join(_like(p) for p in parts), len(parts))
+
+
+def kw_expr(query, vector_available=True):
+    """The keyword half of the score: 1 for a whole-query hit, else the share
+    of the query that hit.
+
+    People type `order_refund 退款金额`, naming a table and a field in one
+    breath. No single search_text contains that whole string, so matching it as
+    one LIKE scores zero and the keyword half stops helping exactly where it is
+    needed most. Scoring per word lets each half contribute what it can, while
+    a contiguous match of the whole query still wins outright.
+
+    With the embedding service down the keyword half is all there is, and a
+    Chinese phrase offers no spaces to split on, so it falls back to character
+    pairs. That stays out of the normal path, where it would only add noise to
+    a score the vector half already answers.
+    """
+    whole = _like(query)
+    tokens = [t for t in _TOKEN_SPLIT.split(query.strip()) if t][:MAX_TOKENS]
+    if len(tokens) > 1:
+        return _share(whole, tokens)
+    if vector_available or len(query) < 4:
+        return whole
+    return _share(whole, [query[i:i + 2]
+                          for i in range(len(query) - 1)][:MAX_GRAMS])
 
 
 # ----------------------------------------------------------------- typography
@@ -152,16 +227,26 @@ def _absolutise(block):
 
 # ------------------------------------------------------------------ embedding
 
-@lru_cache(maxsize=512)
+_EMBED_CACHE = {}
+EMBED_CACHE_MAX = 512
+
+
 def embed(query):
     """Vector literal for `query`, or None when the service is unreachable.
 
     Returning None is deliberate: the caller substitutes 0 for the vector
     score, so an embedding outage downgrades search to keyword-only instead of
     failing the page.
+
+    Only successes are cached. Under lru_cache a single three-second timeout
+    was remembered as "this query has no vector", leaving that exact phrase on
+    keyword-only results for the rest of the worker's life.
     """
     if not EMBED_KEY or not query:
         return None
+    cached = _EMBED_CACHE.get(query)
+    if cached:
+        return cached
     payload = json.dumps({"model": EMBED_MODEL,
                           "input": query[:MAX_QUERY_LEN]}).encode("utf-8")
     req = urllib.request.Request(
@@ -171,10 +256,14 @@ def embed(query):
     try:
         with urllib.request.urlopen(req, timeout=EMBED_TIMEOUT) as resp:
             vector = json.loads(resp.read().decode("utf-8"))["data"][0]["embedding"]
-        return "[%s]" % ",".join("%.6f" % f for f in vector)
     except Exception as ex:  # noqa: BLE001
         logger.warning("meta_search: embedding failed, keyword-only: %s", ex)
         return None
+    literal = "[%s]" % ",".join("%.6f" % f for f in vector)
+    if len(_EMBED_CACHE) >= EMBED_CACHE_MAX:
+        _EMBED_CACHE.clear()   # a search box does not need a real eviction policy
+    _EMBED_CACHE[query] = literal
+    return literal
 
 
 # ----------------------------------------------------------------- data access
@@ -190,43 +279,122 @@ def _engine():
 
 
 def _rows(sql):
-    from sqlalchemy import text
-
     with _engine() as eng, eng.connect() as conn:
-        result = conn.execute(text(sql))
+        result = conn.execute(_statement(sql))
         keys = list(result.keys())
         return [dict(zip(keys, row)) for row in result.fetchall()]
 
 
-def search_tables(query):
+def row_score(query):
+    """Per-row relevance, and whether the vector half is actually available."""
     vector = embed(query)
-    vec_expr = ("COALESCE(cosine_similarity(embedding, %s), 0)" % vector
-                if vector else "0")
-    score = "%s * vec_score + %s * kw_hit" % (W_VEC, W_KW)
+    vec = ("COALESCE(cosine_similarity(embedding, %s), 0)" % vector
+           if vector else "0")
+    return ("%s * (%s) + %s * (%s)"
+            % (W_VEC, vec, W_KW, kw_expr(query, bool(vector))), bool(vector))
+
+
+def floor_for(used_vector, normal):
+    """The cut-off, lowered when there is no vector half to cut noise out of.
+
+    A perfect keyword hit scores W_KW and nothing more, which is below every
+    floor tuned against vector similarity -- so the keyword-only fallback the
+    page promises during an embedding outage used to return a banner and an
+    empty list. A literal match needs no floor beyond being non-zero: it either
+    appears in the text or it does not.
+    """
+    return normal if used_vector else KW_ONLY_FLOOR
+
+
+def _ordered_hits(value):
+    """Unpack the matched column names, best first.
+
+    GROUP_CONCAT promises no order, so the SQL prefixes each name with its rank
+    within the table and the order is restored here rather than relying on a
+    dialect-specific `GROUP_CONCAT(... ORDER BY ...)`.
+    """
+    if not value:
+        return []
+    ranked = []
+    for item in value.split(","):
+        rank, _, name = item.partition(":")
+        ranked.append((int(rank) if rank.isdigit() else 99, name))
+    return [name for _, name in sorted(ranked)]
+
+
+def search_tables(query):
+    score, used_vector = row_score(query)
+    combined = ("GREATEST(t_score, {w} * c_score) + "
+                "{combo} * LEAST(t_score, {w} * c_score)"
+                .format(w=COL_WEIGHT, combo=COMBO))
     sql = """
-        SELECT db_name, table_name,
-               MAX(CASE WHEN obj_type = 'table' THEN `comment` END) AS table_comment,
-               MAX(CASE WHEN obj_type = 'table' THEN comment_source END) AS table_source,
-               ROUND(MAX({score}), 3) AS score,
-               GROUP_CONCAT(CASE WHEN obj_type = 'column'
-                                  AND (vec_score >= {hit} OR kw_hit = 1)
-                                 THEN column_name END) AS hit_columns,
-               COUNT(CASE WHEN obj_type = 'column' THEN 1 END) AS column_n
-        FROM (
+        WITH scored AS (
           SELECT db_name, table_name, column_name, obj_type, `comment`,
-                 comment_source,
-                 {vec} AS vec_score,
-                 CASE WHEN LOWER(search_text) LIKE LOWER({kw}) THEN 1 ELSE 0 END AS kw_hit
+                 comment_source, {score} AS rs
           FROM {table}
-        ) t
-        GROUP BY db_name, table_name
-        HAVING MAX({score}) > {floor}
+        ),
+        ranked AS (
+          SELECT db_name, table_name, column_name, rs,
+                 ROW_NUMBER() OVER (PARTITION BY db_name, table_name
+                                    ORDER BY rs DESC) AS rn
+          FROM scored WHERE obj_type = 'column'
+        ),
+        hits AS (
+          SELECT db_name, table_name,
+                 GROUP_CONCAT(CASE WHEN rn <= {chips} AND rs >= {hit}
+                                   THEN concat(CAST(rn AS STRING), ':',
+                                               column_name) END) AS hit_columns,
+                 COUNT(CASE WHEN rs >= {hit} THEN 1 END) AS hit_n
+          FROM ranked GROUP BY db_name, table_name
+        ),
+        agg AS (
+          SELECT db_name, table_name,
+                 MAX(CASE WHEN obj_type = 'table' THEN `comment` END) AS table_comment,
+                 MAX(CASE WHEN obj_type = 'table' THEN comment_source END) AS table_source,
+                 COALESCE(MAX(CASE WHEN obj_type = 'table'  THEN rs END), 0) AS t_score,
+                 COALESCE(MAX(CASE WHEN obj_type = 'column' THEN rs END), 0) AS c_score,
+                 COUNT(CASE WHEN obj_type = 'column' THEN 1 END) AS column_n
+          FROM scored GROUP BY db_name, table_name
+        )
+        SELECT a.db_name, a.table_name, a.table_comment, a.table_source,
+               a.column_n, ROUND({combined}, 3) AS score,
+               h.hit_columns, COALESCE(h.hit_n, 0) AS hit_n
+        FROM agg a
+        LEFT JOIN hits h ON a.db_name = h.db_name AND a.table_name = h.table_name
+        WHERE {combined} > {floor}
         ORDER BY score DESC
         LIMIT {limit}
-    """.format(score=score, hit=COLUMN_HIT, vec=vec_expr,
-               kw=like_literal(query), table=TABLE, floor=MIN_SCORE,
-               limit=MAX_ROWS)
-    return _rows(sql), bool(vector)
+    """.format(score=score, combined=combined, chips=HIT_CHIPS, table=TABLE,
+               hit=floor_for(used_vector, COLUMN_HIT),
+               floor=floor_for(used_vector, MIN_SCORE), limit=MAX_ROWS)
+    rows = _rows(sql)
+    for row in rows:
+        row["hit_columns"] = _ordered_hits(row["hit_columns"])
+    return rows, used_vector
+
+
+def search_columns(query):
+    """Rank individual columns, for when the question is 哪里有这个字段.
+
+    Same per-row score as the table search uses; the difference is that nothing
+    is folded up into tables, so a column in a table whose name and comment say
+    nothing about the query can still be the top result.
+    """
+    score, used_vector = row_score(query)
+    sql = """
+        SELECT id, db_name, table_name, column_name, data_type, `comment`,
+               comment_source, ROUND(rs, 3) AS score
+        FROM (
+          SELECT id, db_name, table_name, column_name, data_type, `comment`,
+                 comment_source, {score} AS rs
+          FROM {table} WHERE obj_type = 'column'
+        ) c
+        WHERE rs >= {hit}
+        ORDER BY rs DESC
+        LIMIT {limit}
+    """.format(score=score, table=TABLE, limit=MAX_ROWS,
+               hit=floor_for(used_vector, COLUMN_HIT))
+    return _rows(sql), used_vector
 
 
 def table_columns(db_name, table_name):
@@ -259,8 +427,6 @@ def confirm_comment(row_id, comment):
     recomputes both from this comment, notices the hash moved and re-embeds
     the row, so a corrected comment also improves future retrieval.
     """
-    from sqlalchemy import text
-
     sql = """
         UPDATE {table}
         SET `comment` = {comment}, comment_source = 'human',
@@ -270,7 +436,7 @@ def confirm_comment(row_id, comment):
                now=sql_str(datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
                row_id=int(row_id))
     with _engine() as eng, eng.connect() as conn:
-        conn.execute(text(sql))
+        conn.execute(_statement(sql))
 
 
 # ------------------------------------------------------------------- the view
@@ -300,15 +466,25 @@ class MetaSearchView(BaseView):
     @expose("/api/search")
     @has_access_api
     def search(self):
+        """Table results by default, column results with mode=column.
+
+        One endpoint rather than two so the two granularities cannot drift
+        apart in the role editor: anyone allowed to search is allowed to search
+        either way.
+        """
         query = (request.args.get("q") or "").strip()[:MAX_QUERY_LEN]
+        mode = "column" if request.args.get("mode") == "column" else "table"
         if not query:
-            return jsonify({"q": "", "vector": False, "results": []})
+            return jsonify({"q": "", "mode": mode, "vector": False,
+                            "results": []})
         try:
-            results, used_vector = search_tables(query)
+            finder = search_columns if mode == "column" else search_tables
+            results, used_vector = finder(query)
         except Exception as ex:  # noqa: BLE001
             logger.exception("meta_search: query failed")
             return jsonify({"error": str(ex)[:300]}), 500
-        return jsonify({"q": query, "vector": used_vector, "results": results})
+        return jsonify({"q": query, "mode": mode, "vector": used_vector,
+                        "results": results})
 
     @expose("/api/columns")
     @has_access_api

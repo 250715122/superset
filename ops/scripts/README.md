@@ -223,13 +223,14 @@ bash run_tab_access_http_check.sh <看板id> <账号>:<密码>
 
 | 脚本 | 用途 |
 |---|---|
-| `meta_search.py` | 检索页后端。`register(app)` 挂 `/meta-search/` 与 `api/search`、`api/columns`、`api/confirm`、`api/stats`，并幂等补齐五个 `can_*` 权限。向量检索不可用时自动回落关键词检索 |
-| `meta_search.html` | 检索页前端（放 `custom_templates/`）。实时检索、库/分层/来源筛选、字段展开、就地改说明、清空按钮、`/` 聚焦与方向键，随 Superset 主题切换明暗与紧凑模式 |
+| `meta_search.py` | 检索页后端。`register(app)` 挂 `/meta-search/` 与 `api/search`、`api/columns`、`api/confirm`、`api/stats`，并幂等补齐五个 `can_*` 权限。`api/search` 带 `mode=table\|column` 两种粒度（同一个权限）；关键词按词计分，整串命中优先。向量检索不可用时自动回落关键词检索，中文按二字切分 |
+| `meta_search.html` | 检索页前端（放 `custom_templates/`）。「按表 / 按字段」切换、实时检索、库/分层/来源筛选、字段展开、就地改说明、清空按钮、`/` 聚焦与方向键，随 Superset 主题切换明暗与紧凑模式 |
 | `patch_config_meta_search.py` | 把 `meta_search.register(app)` 写进测试机 `superset_config.py` 的 `FLASK_APP_MUTATOR`（函数形态）。幂等，带备份 |
 | `patch_config_meta_search_prod.py` | 同上，生产形态：`FLASK_APP_MUTATOR` 是 `CustomFlaskAppMutator` 类实例，钩子要写进 `__call__` 且缩进不同 |
 | `add_meta_search_tab_row.py` | 在看板 38「数据资产」Tab 最上方插一行 iframe。只动 `position_json`，新行的 `parents` 从同 Tab 原首行复制。幂等 |
 | `sync_sr_meta_knowledge.py` / `.sh` | 扫全库元数据，缺注释的用 LLM 补、再向量化，落 `bluetti.ads_sr_meta_knowledge`。`plan` 只报计划、`apply` 实写。生产 crontab `47 3 * * *`，密钥读同目录 `.meta_kb_env`（640，不入库） |
-| `verify_meta_search.py [base_url]` | 15 项验收：权限生成、未登录拦截、CSP nonce、向量与回落检索、字段读取、注释回写、注入字符串 |
+| `verify_meta_search.py [base_url]` | 17 项验收：权限生成、未登录拦截、CSP nonce、向量与回落检索、按字段检索、多词且带冒号的查询、字段读取、注释回写、注入字符串 |
+| `eval_meta_search.py --tag <名字>` | 固定标注评测集（29 条查询）量化检索质量，自己拼 SQL 不走接口，改代码前后同一把尺子。`--scoring max\|combo`、`--keyword single\|tokens`、`--col-weight` 可用来扫参和做消融。明细落 `backups/eval_*.json` |
 
 **两个容易踩的点**（都已在脚本里处理）：
 
