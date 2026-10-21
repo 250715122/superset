@@ -305,8 +305,8 @@ mark { background:var(--mark-bg); color:var(--mark-fg); padding:0 2px; border-ra
   <div class="search">
     <div class="field">
       <div class="modes" id="modes" role="group" aria-label="检索粒度">
-        <button class="mode" type="button" data-m="table" aria-pressed="true">按表</button>
-        <button class="mode" type="button" data-m="column" aria-pressed="false">按字段</button>
+        <button class="mode" type="button" data-m="table" aria-pressed="false">按表</button>
+        <button class="mode" type="button" data-m="column" aria-pressed="true">按字段</button>
       </div>
       <div class="inputwrap">
         <svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor"
@@ -315,7 +315,7 @@ mark { background:var(--mark-bg); color:var(--mark-fg); padding:0 2px; border-ra
         </svg>
         <input id="q" autocomplete="off" autofocus
                aria-label="检索数据资产"
-               placeholder="描述你要找的数据，或直接输入表名片段">
+               placeholder="描述你要找的字段，或直接输入字段名片段">
         <button class="clear" id="clear" type="button" aria-label="清空检索">
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor"
                stroke-width="2.2" stroke-linecap="round" aria-hidden="true">
@@ -354,11 +354,15 @@ mark { background:var(--mark-bg); color:var(--mark-fg); padding:0 2px; border-ra
             '每日活跃设备', 'ads_cs_chat'],
     column: ['退款金额', '设备序列号', '剩余电量', '物流单号', 'session_id']
   };
+  var PLACEHOLDERS = {
+    table: '描述你要找的数据，或直接输入表名片段',
+    column: '描述你要找的字段，或直接输入字段名片段'
+  };
   var SOURCES = [['', '全部'], ['llm', '待确认'], ['human', '已确认'],
                  ['native', '原生']];
 
   var state = {
-    mode: 'table',      // 'table' -> one row per table, 'column' -> per field
+    mode: 'column',     // 'table' -> one row per table, 'column' -> per field
     query: '',          // the query the current results belong to
     rows: [],           // unfiltered results from the server
     filters: { source: '', layer: '', db: '' },
@@ -865,6 +869,7 @@ mark { background:var(--mark-bg); color:var(--mark-fg); padding:0 2px; border-ra
       modesEl.querySelectorAll('.mode').forEach(function (other) {
         other.setAttribute('aria-pressed', String(other === btn));
       });
+      qEl.placeholder = PLACEHOLDERS[state.mode];
       // The two modes return different shapes, so results from the old one
       // cannot simply be re-rendered; re-ask, or go back to the landing page.
       state.rows = [];
