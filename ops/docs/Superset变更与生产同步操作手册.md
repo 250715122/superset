@@ -12,9 +12,9 @@
 |---|---|---|---|---|
 | **开发 Superset** | `agi@192.168.41.122`（可直接 ssh/scp） | `/opt/superset/superset_config.py` | `/opt/superset/venv` | PostgreSQL（本机） |
 | **生产 Superset** | `10.100.19.1`（**只能经 JumpServer**，不能直连） | `/mnt/data/superset/superset_config.py` | `/mnt/data/superset/venv` | PostgreSQL（本机） |
-| **StarRocks（两环境共用）** | 生产 `10.100.11.201:9030` ＝ 开发 `192.168.40.180:19030`（**同一集群**） | — | — | 库名 `bluetti`，账号密码不入库（见内网密码库） |
+| **StarRocks（两环境共用）** | 生产 `10.100.11.201:9030` ＝ 开发 `192.168.40.180:19030`（**同一集群**） | — | — | 库名 `bluetti`，root 密码 `ek8Y#MVh8@--]uG` |
 
-**JumpServer 通道**：`jumpserver.poweroak.ltd:2222`，账号密码不入库，运行脚本前设置环境变量 `JUMP_USER` / `JUMP_PASSWORD`；登录后菜单 `/Flink` → 选 `1`（StarRocks-01）→ 再 `ssh 10.100.19.1` 到生产。本目录 `_deploy/jump_run.py`、`jump_put_fast.py` 已把这套跳板流程封装好，正常情况下不用手动敲跳板。
+**JumpServer 通道**：`jumpserver.poweroak.ltd:2222`，账号 `guote@poweroak.net` / `qq250715122`；登录后菜单 `/Flink` → 选 `1`（StarRocks-01）→ 再 `ssh 10.100.19.1` 到生产。本目录 `_deploy/jump_run.py`、`jump_put_fast.py` 已把这套跳板流程封装好，正常情况下不用手动敲跳板。
 
 **关键事实（最容易踩的认知坑）**：
 - **两环境的 StarRocks 是同一个集群**。凡是改数据层（建/改/删 视图、MV、表、改名），在开发执行的瞬间生产就同时生效/受影响，**不需要也不应该在生产再执行一遍数据层 DDL**。反过来，开发改坏数据层 = 生产同时坏。
@@ -39,6 +39,7 @@
 | **B. Superset 元数据**（看板/图表/数据集/角色/权限） | 加图表说明、show value、Tab 图标、数字格式、建角色、改数据集指向 | **本手册第三节的脚本双跑法** | **是**（元数据库独立，两边各跑一次） |
 | **C. 前端资产**（自研插件/静态文件） | 新增 ECharts 地图插件、改 SPA 资源 | 打包 tar → 经 JumpServer 分片传输 → 替换 `static/assets` → 重启 | **是**（详见《卡车电池设备分析-数据对象清单.md》五节） |
 | **D. 配置 / 自定义模板** | `superset_config.py`、`custom_templates/*.html`（登录页、注入 CSS） | `jump_put_fast.py` 传文件 → 修属主 → **重启 Superset** | **是**（两边各改一次；改配置务必先备份） |
+| **E. Superset 源码补丁** | Tab 级权限（见第六节） | 改 fork → 构建前端 → 覆盖 venv 里的包文件 + `static/assets` → 重启 | **是**（两边各装一次；**每次升级 Superset 必须重装**） |
 
 本手册重点是**最常用的 B 类**。C 类是低频重活，A 类"改完就好"。
 
@@ -262,7 +263,103 @@ python jump_run.py "$env:TEMP\_cmd.txt" 240 2>&1 | Select-String "DONE|FIX|SKIP|
 
 ---
 
-## 六、变更日志
+## 六、Tab 级权限（E 类源码改造专题）
+
+让同一块看板下的不同 Tab 只对持有指定角色的人可见。日常配置和发角色见
+《Superset看板授权操作指南.md》第三节，本节只讲**改了什么、怎么装、怎么回滚**。
+
+### 6.1 为什么必须改源码
+
+Superset 6.0.1 里 Tab 只是 `position_json` 里的布局节点，没有任何权限概念；
+而且 `security/manager.py` 的 `raise_for_access` 有一条分支：**只要你能打开这块
+看板，看板上每张图的数据你都有权读**。所以光在前端把 Tab 藏起来毫无意义——
+直接 POST `/api/v1/chart/data` 带上 `slice_id` 就能把数据取走。真正的隔离必须
+落在服务端。
+
+配置存在看板 `json_metadata` 里，键为 Tab 的布局 id，值为**角色名**数组：
+
+```json
+{"tab_roles": {"TAB-7ucgZqp...": ["运维"], "TAB-abc...": ["分析师", "运维"]}}
+```
+
+没出现在这个表里的 Tab = 所有人可见，因此**现有看板一律不受影响**。存角色名
+而不是 id，是为了让看板导出到另一个环境后这份配置依然有效。
+
+### 6.2 改了哪些文件
+
+代码在 fork `github.com/250715122/superset` 的 `master` 分支，构建机
+`gt@192.168.56.101:/opt/superset-build` 是它的干净检出。
+
+| 文件 | 改动 |
+|---|---|
+| `superset/dashboards/tab_access.py` | **新增**，可见性判定：可见 Tab / 可见图表 / 裁剪后的 position 与 metadata |
+| `superset/security/manager.py` | 收紧 `raise_for_access` 与 `has_drill_by_access`——看板授权不再覆盖隐藏 Tab 下的图表 |
+| `superset/dashboards/api.py` | 看板详情出口按可见性裁剪 |
+| `superset/daos/dashboard.py` | `/charts`、`/datasets`、`/tabs` 三个出口裁剪；禁止受限用户复制看板 |
+| `superset/models/dashboard.py` | 从裁剪后的 position 解析 Tab 列表 |
+| `superset/dashboards/schemas.py` | `json_metadata` 放行 `tab_roles` 字段（否则保存报 400） |
+| `superset/commands/dashboard/update.py` | 看不全的人不许改布局，否则一存就把别人的 Tab 弄丢 |
+| `superset/commands/dashboard/export.py` | 导出同样裁剪；属主/管理员仍导出完整看板 |
+| `superset-frontend/.../PropertiesModal/TabRolesControl.tsx` | **新增**，看板属性里的 Tab 角色配置区 |
+| `superset-frontend/.../PropertiesModal/index.tsx` | 接入上面的组件 |
+
+### 6.3 安装
+
+后端（开发直连；生产把文件经 `jump_put_fast.py` 送到 `/mnt/data/superset/stage/`
+后同样跑这个脚本）：
+
+```bash
+# 参数：venv 的 python、site-packages 里的 superset 目录、暂存目录
+bash install_tab_access.sh \
+  /opt/superset/venv/bin/python \
+  /opt/superset/venv/lib/python3.10/site-packages/superset \
+  ~/bi-tabaccess/stage
+```
+
+脚本会**先把被覆盖的原文件备份到 `<site-packages>/_tab_access_backup_<时间戳>/`**，
+再逐个 `py_compile`，最后试导入一次确认没有循环引用，输出 `INSTALL_DONE|<时间戳>`。
+
+前端：在构建机上 `bash build_frontend_tabroles.sh`，产物是 `static/assets`，
+按 C 类流程（打 tar → 经跳板分片传输 → 替换目录）发到生产。
+
+两边装完都要**重启 Superset**（`systemctl restart superset`）。
+
+### 6.4 验证
+
+```bash
+bash run_tab_access_http_check.sh <看板id> <没有该角色的账号>:<密码>
+```
+
+以管理员和该账号分别真实登录，比对两边拿到的 Tab / 图表 / 数据集，并实际请求
+一次受限图表的数据，预期管理员通、该账号 403。另有三个更细的回归脚本：
+`test_tab_access.py`（全链路）、`test_tab_access_edges.py`（嵌套 Tab、空容器
+塌缩、筛选器作用域等 24 条边界）、`test_tab_access_portability.py`（导出导入
+往返后限制仍在）。
+
+### 6.5 回滚
+
+```bash
+cp -r <site-packages>/_tab_access_backup_<时间戳>/* <site-packages>/superset/
+rm <site-packages>/superset/dashboards/tab_access.py
+systemctl restart superset
+```
+
+前端回滚＝换回改造前的 `static/assets` 备份。回滚后看板里残留的 `tab_roles`
+只是一个没人读的多余键，不影响使用。
+
+### 6.6 已知边界
+
+- **定时报表和缩略图不遵守 Tab 限制**，它们以固定身份渲染，截的是完整看板。
+- **编辑者（`编辑·<看板名>`）和 Owner 不受限制**，这是必须的：保存布局会把
+  浏览器里的布局整个写回去。别拿 Tab 权限当对编辑者的隔离。
+- 非属主导出看板会返回 500——这是上游既有毛病（图表导出自带访问过滤），有没有
+  Tab 限制都一样，没有数据泄露。
+- **每次升级 Superset 都要重装这套补丁**，否则功能静默消失：所有 Tab 对所有人
+  重新可见。升级后务必跑一次 6.4 的验证。
+
+---
+
+## 七、变更日志
 
 ### 2026-09-24（Cockpit 资产 Tab 增强）
 
@@ -701,6 +798,12 @@ session["locale"] = self.babel_default_locale   # ← 把默认值“落盘”�
 **追加坑（时间筛选中文显示成「货币」「运行查询」，2026-10-12）**：上游 zh `.po` 里 `Current day/week/...`、`Last day/...` 等是 `#, fuzzy` 的机器乱猜译文，而生成语言包用了 `--fuzzy`/`-f`，所以错译直接上屏。fork 提交 `e0636da4` 把正确译文**追加到文件末尾**而不是改原条目，导致同一 msgid 出现两次，po2json/pybabel 取**第一条**（错的），修正不生效。**对策**：改译文一律就地改原条目并去掉 `fuzzy`，不要追加。fork 提交 `d3af4182` 已合并 40 条重复项并补 `Start (inclusive)`/`End (exclusive)`。只换 zh 三件套的流程：构建机 `_gen_zh_langpack.sh` 生成 json → `_install_zh_lang.sh <venv> <dir>`（自动备份到 `LC_MESSAGES/backup_<时间戳>/`、编译 `.mo`）→ 重启。检查脚本 `_audit_zh_datefilter.py`（本地查重复/fuzzy）、`_verify_zh_datefilter_served.sh`（测试机）、`_verify_zh_datefilter_prod.py`（生产，ASCII 输出）。测试 + 生产均已应用，sha256：json `e76bf4c1…`、po `5e917e82…`。
 
 ### 历史变更
+- 2026-10-21 **数据资产检索的空状态与模式切换改版**（纯模板改动，只动 `meta_search.html`）。三处：① 没输入也没结果时，`<body class="start">` 让搜索框落在**上半屏的正中**（`padding-top:max(0px, calc(25vh - 42px))`，42px = body 20 + .search 2 + 输入框半高 20），说明文字、示例、图例排在框下方；一开始检索就去掉 `start`，恢复贴顶的 sticky 布局，`padding-top` 带 .22s 过渡。② 「按表 / 按字段」从副行 `.subbar` 移进 `.field`，坐在输入框左边，容器高度 40px 和输入框对齐（`.subbar` 随之删掉，`.filters` 自己带 `margin-top:12px`）。③ 切换态改成**填充主色**、未选中压到 `--text-3`，并新增 `--on-accent`（亮 `#fff` / 暗 `#06222b`）给主色块上的文字用，`.go` 和筛选 chip 一并换上。测试 + 生产 `verify_meta_search.py` 各 **17/17**，四处（本地 / 构建机 / 测试 / 生产）sha256 同为 `2e7f0c0e…`，fork 提交 `9e31549c`。
+  - **原来暗色主题下切换按钮几乎看不出选中**：选中态用的是 `--surface-1`（`#1a1a1a`），容器底是 `--surface-2`（`#1f1f1f`），两个灰差 5 个色阶，肉眼等于没变。**不要靠 surface 层级表达「选中」**，暗色里层级差本来就只有几个色阶；选中要么填主色要么描边，别指望背景微差。
+  - **暗色主题的主色 `#35b8d8` 很亮，上面再配白字只有 1.95:1**。所以 `--on-accent` 在暗色下取深色而不是跟着亮色抄 `#fff`。
+  - **验收用 Playwright 本地截图**（Cursor 的浏览器 MCP 当时连不上）：把模板里 `{{ font_css }}`/`{{ csrf_token() }}`/`{{ csp_nonce() }}` 替换掉另存，`python -m http.server` 起本地页，用 `context.route` 把 `/meta-search/api/stats`、`/api/search` 拦下来喂假数据，`add_init_script` 预置 `localStorage['superset-theme-mode']`，明暗 × 空状态/结果页四张图一次拍完。改 CSS 不用等部署。
+  - **坑：PowerShell 会把 `ssh host "..."` 里的 `$(date +%F)` 当成自己的子表达式在本机展开**，备份文件名因此变成末尾带空格的 `meta_search.html.bak. `，连 `mv` 都不好删（glob 匹配得到、`"$f"` 传过去又丢了空格，最后用 `find -print0 | xargs -0`）。**远端命令一律用单引号包、时间戳写死字面量**，别让 PowerShell 有机会解释。
+  - **坑：`verify_meta_search.py` 放在 `/tmp` 下跑会被同目录的历史遗留 `starrocks.py` 劫持 import**（`sys.path[0]` 就是脚本所在目录），报 `App not initialized yet`。改放 `/tmp/vrfy/` 这种干净目录。生产还要 `export SUPERSET_CONFIG_PATH=/mnt/data/superset/superset_config.py`，脚本里是 `setdefault("/opt/superset/...")`，不导就去找开发机的路径。
 - 2026-10-20 **数据资产检索支持按字段检索，列向量全部重算**。原来只能检索表（列只作为表的附属证据），现在页面上多了「按表 / 按字段」切换，字段模式直接给一张扁平的字段排行，带类型、所在表、来源和相关度，注释可就地改并确认（复用 `/api/confirm`）。接口是 `/api/search?mode=table|column`，**没有新开端点也没有新权限**——拆成两个 `can_*` 只会让「有表检索权限却没有字段检索权限」成为可能。效果用固定评测集量化（`eval_meta_search.py`，29 条标注查询，生产实测）：列检索 **0.9333 → 0.9750**，表检索 top5 命中 **7/8 → 8/8**，平均排名 1.00 不变。明细 JSON 在生产 `backups/eval_*.json`。
   - **根因：列的 `search_text` 不该带表名前缀**。原来列行 embed 的是 `库.表 | 列名 | 类型 | 注释`，等于给同一张表的每个列都盖上「这是退款表」的章，把无关列抬上来、把真正相关的列压下去；关键词那一路更糟——`recycle_order_node` 这个表名里含有 `order_no`，于是搜 `order_no` 时该表**每一列**（`remark`、`handler`、`id`）都白拿 0.3 分，前 5 名全是垃圾，该查询得分 0.00。改成列只 embed `列名 | 注释`（类型也去掉，`VARCHAR` 不是任何人会搜的词），表行照旧保留 `库.表 | 注释 | 兄弟列名`。改完该查询 1.00。
   - **坑：列文本变短会整体抬高余弦相似度，表级排名会被列证据带偏**。短查询天然更接近短文本，去掉前缀后列行普遍比表行分高，`每日活跃设备` 的正确答案 `ads_tb_active_dev` 反而掉出前 5。解法是给列证据一个权重 `COL_WEIGHT` 再去和表证据比。扫参结果（列检索分恒为 0.9750，只影响表）：1.0 → 6/8、0.9 和 0.85 → 7/8、**0.8 → 8/8 排名 1.00**、0.7 → 8/8 但排名退到 1.12。取 0.8，连改动前就漏的 `电池包数据` 也捞回来了。
@@ -712,17 +815,18 @@ session["locale"] = self.babel_default_locale   # ← 把默认值“落盘”�
   - **坑：降级为关键词检索时必然返回空**。满分关键词命中也只有 `W_KW = 0.3`，而门槛是 `> 0.3`，于是页面弹「已降级为关键词检索」却一条都不给。两处要改：① 没有向量时门槛降到 0.01（字面命中不需要噪声门槛，有就是有）；② 中文没有空格可切，长短语在任何 `search_text` 里都不是连续子串，所以**仅在降级路径**按二字切分（`客服会话` → `客服`/`服会`/`会话`）。只在降级时启用，避免给已调好的向量主路径添噪。验证用 `_test_degrade.py`（把 `EMBED_BASE` 指向黑洞地址）：改前 0 条，改后 `客服首次响应时长` 50 条、`会话转人工率` 20 条，**首位命中的表和向量模式完全一致**。
   - **评测集怎么用**：`eval_meta_search.py --tag <名字> [--scoring max|combo] [--keyword single|tokens] [--col-weight 0.8]`，在 Superset 主机上跑，自己拼 SQL 不走接口，所以改代码前后是同一把尺子。相关性用正则声明（就是标注本身，欢迎吵），列查询按「命中数 ÷ 全库可达命中数（上限 5）」计分——全库只有 2 个列名长得像 `refundAmount`，拿满 2 个就该是 1.0，除以 5 会永远卡在 0.40 看不出改进。**标注要先验证可满足**：`每日活跃设备` 一开始判为未命中纯属正则写错（真实表名是 `ads_tb_active_dev`，不是 `active_device`）。
   - 测试 + 生产 `verify_meta_search.py` 各 **17/17** 通过（新增「按字段检索」「多词且带冒号的查询不报错」两条）。两环境 `meta_search.py` / `meta_search.html` / `verify_meta_search.py` sha256 与 fork 逐字节一致。
+
 - 2026-10-20 **「数据中台速览观众」组挂错了看板**：郭特进了组却打不开看板。根因是生产有两个几乎同名的看板，各由一个只差两个字的角色把守——37 `dp-sr-overview`「StarRocks Cockpit·数据中台速览」（草稿，53 图）归 `看板·数据中台速览`，38 `dp-sr-global`「数据中台速览」（已发布，26 图）归 **`看板·数据中台全局速览`**。组带的是前者，所以成员拿到的是一个草稿看板的权限（草稿不进看板列表，等于什么也看不到），而 38 的角色**零持有者**，除 Admin 外没人能打开。已给组补上 `看板·数据中台全局速览`（保留原角色），并把 37 及其角色改名为「StarRocks Cockpit（旧版·草稿）」/ `看板·StarRocks Cockpit旧版` 以免再挂错。脚本 `fix_dp_sr_audience.py`（幂等，支持 `--dry-run`）；全量快照 `backups/authz_snapshot_20261020_151539.json`，定向备份 `backups/dp_sr_audience_20261020_151541.json`。
   - **验收要以用户身份走真实 HTTP，只比对角色集合不够**。用 `app.test_client()` 配 `sess["_user_id"]` 冒充郭特：看板页 200、`/api/v1/dashboard/38` 200、看板列表里出现 38、带 `dashboard_id=38` 的 `/api/v1/chart/data` 取数 200（DASHBOARD_RBAC 下数据源权限是靠看板上下文隐式授予的，不带 `dashboard_id` 会 403，容易误判成没权限）。
   - **组→角色这条链路本身是好的**：`security_manager.get_user_roles()` 确实把组里的角色算进来了，排查时不用怀疑这一环。
   - **顺带确认**：郭特的 6 个 `看板·` 角色都挂着真实看板，其中 14「SOH异常展示」、20「B500用户数据汇总」、37 是**草稿未发布**，所以不出现在他的看板列表里——这是 Superset 的正常行为，不是权限问题。若本该可见，把看板发布即可。
 - 2026-10-20 **向量检索换到自建网关 `agi-newapi.bluetti.com`**。硅基流动的 key 被吊销，`embeddings` 全 401（`{"code":30014,"message":"Token is invalid."}`），检索页弹「向量服务暂时不可用」降级为关键词；10-20 凌晨那次夜间同步有 82 张表因 LLM 401 没写入。换上自建网关新 key 后：目录 320 个模型，`BAAI/bge-m3` 仍是 **1024 维且向量值与硅基流动直连逐位相同**（网关上游就是硅基流动），所以库里 20125 条向量**不用重算**；`Pro/deepseek-ai/DeepSeek-V3` 可用，额度无上限，生产到网关 0.24s（走内网，比直连还快）。两环境 `.meta_kb_env` 只改了 `EMBED_BASE_URL`/`LLM_BASE_URL`/两个 `API_KEY`，模型与维度原样保留，备份在各自 `backups/.meta_kb_env.bak.20261020_*`。补跑一次同步：`written=390`，失败从 82 降到 2（两张宽表读超时，非鉴权）。测试 + 生产 `verify_meta_search.py` 各 15/15 通过。
-  - **`embed()` 带进程内缓存（512 条），改完 `.meta_kb_env` 必须 `sudo systemctl restart superset`**，否则进程里缓存的旧结果和旧 key 都还在。
+  - **`embed()` 带 `@lru_cache(maxsize=512)`，改完 `.meta_kb_env` 必须 `sudo systemctl restart superset`**，否则进程里缓存的旧结果和旧 key 都还在。
   - **坑：`jump_run.py` 把命令包在双引号里传给 ssh，`$(...)` 和 `$VAR` 会在跳板机上展开，不是在生产机**。所以 `active=$(systemctl is-active superset)` 查的是跳板机、永远报 `inactive`，`sed -n '/x/,$p'` 里的 `$p` 被吃掉会报语法错。写 cmd 文件时一律用字面路径，需要取值就上传脚本再 `bash` 执行；`sed` 的范围表达式改用 `awk '/x/{f=1} f'`。
 - 2026-10-16 **数据资产检索上线，嵌进生产看板 38「数据资产」Tab 最上方**。检索页是 FAB 视图 `/meta-search/`（`meta_search.py` + `custom_templates/meta_search.html`），看板里用一行满宽 MARKDOWN 放同源 iframe（`add_meta_search_tab_row.py`，只动 `position_json`，新行 `parents` 从同 Tab 原首行复制）。测试 + 生产均已部署重启，`verify_meta_search.py` 两边各 15/15 通过；改看板前后跑 `protect_manual_dashboard_edits.py`（`PROTECT_DASH_SLUG=dp-sr-global`），diff 只有 `position_json`，26 张图一字未动，基线 `backups/manual_dashboard_baselines/dp-sr-global/20261016_153717.*`。
   - **为什么用 FAB 视图而不是裸 Blueprint**：`add_view_no_menu` 会生成 `MetaSearch` 的 `can_index/can_search/can_columns/can_confirm/can_stats`，可以在角色里勾选，和现有 RBAC 一套体系；裸 Blueprint 只能自己写装饰器，权限页上看不见。iframe 能免登录穿透是因为同源——响应头 `X-Frame-Options: SAMEORIGIN`、CSP `frame-src 'self'`，iframe 直接继承会话 cookie 和 `localStorage`（主题明暗也靠它联动）。
   - **生产的 `FLASK_APP_MUTATOR` 与测试机形态不同**：测试机是函数，生产是 `CustomFlaskAppMutator` 类实例，钩子要写进 `__call__`、缩进 8 格，所以补丁脚本分两个（`patch_config_meta_search.py` / `..._prod.py`）。两者都把注册包在 try/except 里：检索页坏掉不能连累 Superset 启动。生产路径是 `/mnt/data/superset`（不是 `/opt/superset`）。
-  - **知识表 `bluetti.ads_sr_meta_knowledge`**：20125 行全部已向量化，17907 条说明由 LLM 推断待确认。采集脚本 `sync_sr_meta_knowledge.py`，生产 crontab `47 3 * * *`（排在 03:17 / 03:37 之后），密钥在 `/mnt/data/superset/.meta_kb_env`（640，不入库）。测试机与生产的 Database 12 是同一个 StarRocks 集群的两个网络入口，所以这张表只需要回填一次，两边都读得到。
+  - **知识表 `bluetti.ads_sr_meta_knowledge`**：20125 行全部已向量化，17907 条说明由 LLM 推断待确认。采集脚本 `sync_sr_meta_knowledge.py`，生产 crontab `47 3 * * *`（排在 03:17 / 03:37 之后），密钥在 `/mnt/data/superset/.meta_kb_env`（640，不入库）。**测试机与生产的 Database 12 是同一个 StarRocks 集群的两个网络入口**（`192.168.40.180:19030` / `10.100.11.201:9030`），所以这张表只需要回填一次，两边都读得到。
   - **坑：`exec_driver_sql` 会吃掉注释里的 `%`**。为了绕开 SQLAlchemy 编译缓存（每批几 MB 的向量 SQL 全往缓存里塞，进程被 OOM kill，RSS 冲到 642MB）一度改用 `exec_driver_sql`，结果 pymysql 把字面 `%` 当参数占位符，报 `unsupported format character`，4 张表共 109 行整表跳过。正解是**留着 `conn.execute(text(...))`，改成把连接设 `compiled_cache=None`**，两个问题一起解决：补跑后 RSS 全程稳在 277MB，109 行已补回。
   - **坑：生产 `SESSION_COOKIE_SECURE=True` 让本机 http 验收脚本登不进去**。现象很有迷惑性——服务端日志报 `The CSRF session token is missing`，看着像 CSRF 配置问题，实际是 cookiejar 不肯在 http 上回传 Secure cookie，GET 建的会话在 POST 时根本没带上。两层都要处理：① `requests` 在 `prepare_request` 里会用默认策略**新建** jar，所以给 session 设 cookie policy 无效，得在 `prepare_request` 里直接清 `cookie.secure`；② requests 自己的重定向循环**不走** `prepare_request`，登录后新发的 cookie 会漏掉这步，所以登录要 `allow_redirects=False` 手动跟跳转。封装在 `verify_meta_search.py` 的 `LoopbackSession`。
 - 2026-10-14 看板 38「集群概览」chart 557「用户权限」从 `SHOW GRANTS` 改为读每日权限快照，服务端分页恢复可用。脚本 `_deploy/fix_user_privileges_chart.py`（`--apply` 前先 dry run）、采集 `_deploy/sync_sr_user_privileges.sh`。备份 `/mnt/data/superset/backups/user_privileges_20261014_185939.json`。
@@ -795,7 +899,7 @@ session["locale"] = self.babel_default_locale   # ← 把默认值“落盘”�
 
 ---
 
-## 七、当前状态与待决事项（截至 2026-07-28）
+## 八、当前状态与待决事项（截至 2026-07-28）
 
 ### 两环境现状（开发与生产已对齐）
 
