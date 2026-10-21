@@ -16,6 +16,7 @@
   --border:#e3e7ea; --border-strong:#cfd6db;
   --text-1:#1b2a33; --text-2:#5a6b76; --text-3:#8b9aa4;
   --accent:#20a7c9; --accent-hover:#1a8aa8; --accent-soft:#e8f6fa;
+  --on-accent:#fff;
   --mark-bg:#fff1b8; --mark-fg:#613400;
   --native-bg:#f6ffed; --native-fg:#3f7d20; --native-line:#c4e8a4;
   --llm-bg:#fff8e6;    --llm-fg:#ad6800;    --llm-line:#ffdf9e;
@@ -36,6 +37,7 @@
   --text-1:rgba(255,255,255,.88); --text-2:rgba(255,255,255,.6);
   --text-3:rgba(255,255,255,.4);
   --accent:#35b8d8; --accent-hover:#5fcce6; --accent-soft:#10303a;
+  --on-accent:#06222b;
   --mark-bg:#614700; --mark-fg:#ffe58f;
   --native-bg:#162312; --native-fg:#95de64; --native-line:#2c4518;
   --llm-bg:#2b2111;    --llm-fg:#ffc53d;    --llm-line:#594214;
@@ -60,7 +62,12 @@ button { font-family:inherit; }
 .search {
   position:sticky; top:0; z-index:10; background:var(--bg);
   padding:2px 0 12px; margin-bottom:4px;
+  transition:padding-top .22s ease;
 }
+/* Landing: nothing typed, nothing found yet. The viewport is split in half and
+   the field is centred in the top half, so the eye lands on it before the
+   explanatory copy underneath. 42px = body + .search padding + half the field. */
+.start .search { position:static; padding-top:max(0px, calc(25vh - 42px)); }
 .field { display:flex; gap:8px; }
 .inputwrap { position:relative; flex:1; }
 .inputwrap input {
@@ -100,29 +107,30 @@ button { font-family:inherit; }
 .go {
   height:40px; padding:0 22px; font-size:var(--fs-lg); font-weight:500;
   border:0; border-radius:var(--radius); cursor:pointer;
-  background:var(--accent); color:#fff; transition:background .15s;
+  background:var(--accent); color:var(--on-accent); transition:background .15s;
 }
 .go:hover:not(:disabled) { background:var(--accent-hover); }
 .go:disabled { opacity:.55; cursor:default; }
 
 /* ----------------------------------------------------------- mode + filters */
-.subbar { display:flex; align-items:center; flex-wrap:wrap; gap:16px; margin-top:12px; }
 .modes {
-  display:inline-flex; flex:none; gap:2px; padding:2px;
-  background:var(--surface-2); border:1px solid var(--border);
+  display:inline-flex; flex:none; align-items:center; gap:3px;
+  height:40px; padding:3px;
+  background:var(--surface-3); border:1px solid var(--border);
   border-radius:var(--radius);
 }
 .mode {
-  font-size:var(--fs-sm); line-height:22px; padding:0 12px; cursor:pointer;
-  border:0; border-radius:var(--radius-sm); background:none; color:var(--text-2);
+  font-size:var(--fs-md); line-height:32px; padding:0 14px; cursor:pointer;
+  border:0; border-radius:var(--radius-sm); background:none; color:var(--text-3);
   transition:background .12s, color .12s;
 }
-.mode:hover { color:var(--text-1); }
+.mode:hover { color:var(--text-1); background:var(--surface-1); }
 .mode[aria-pressed="true"] {
-  background:var(--surface-1); color:var(--accent); font-weight:500;
+  background:var(--accent); color:var(--on-accent); font-weight:600;
   box-shadow:var(--shadow);
 }
-.filters { display:flex; flex-wrap:wrap; gap:16px; }
+.mode[aria-pressed="true"]:hover { background:var(--accent); color:var(--on-accent); }
+.filters { display:flex; flex-wrap:wrap; gap:16px; margin-top:12px; }
 .fgroup { display:flex; align-items:center; gap:6px; }
 .flabel { font-size:var(--fs-sm); color:var(--text-3); }
 .chip {
@@ -132,7 +140,7 @@ button { font-family:inherit; }
 }
 .chip:hover { border-color:var(--accent); color:var(--accent); }
 .chip[aria-pressed="true"] {
-  background:var(--accent); border-color:var(--accent); color:#fff;
+  background:var(--accent); border-color:var(--accent); color:var(--on-accent);
 }
 
 /* ------------------------------------------------------------ meta line */
@@ -268,6 +276,7 @@ tr:hover .pencil { opacity:1; }
 
 /* --------------------------------------------------------------- states */
 .landing { padding:56px 0 40px; text-align:center; }
+.start .landing { padding:26px 0 40px; }
 .landing h1 { font-size:var(--fs-xl); font-weight:600; margin:0 0 8px; }
 .landing p { font-size:var(--fs-md); color:var(--text-2); margin:0 0 22px; }
 .landing .lab { font-size:var(--fs-sm); color:var(--text-3); margin-right:6px; }
@@ -290,11 +299,15 @@ mark { background:var(--mark-bg); color:var(--mark-fg); padding:0 2px; border-ra
 .legend span { display:inline-flex; align-items:center; gap:5px; }
 </style>
 </head>
-<body>
+<body class="start">
 <div class="wrap">
 
   <div class="search">
     <div class="field">
+      <div class="modes" id="modes" role="group" aria-label="检索粒度">
+        <button class="mode" type="button" data-m="table" aria-pressed="true">按表</button>
+        <button class="mode" type="button" data-m="column" aria-pressed="false">按字段</button>
+      </div>
       <div class="inputwrap">
         <svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor"
              stroke-width="1.6" aria-hidden="true">
@@ -313,13 +326,7 @@ mark { background:var(--mark-bg); color:var(--mark-fg); padding:0 2px; border-ra
       </div>
       <button class="go" id="go">检索</button>
     </div>
-    <div class="subbar">
-      <div class="modes" id="modes">
-        <button class="mode" type="button" data-m="table" aria-pressed="true">按表</button>
-        <button class="mode" type="button" data-m="column" aria-pressed="false">按字段</button>
-      </div>
-      <div class="filters" id="filters" hidden></div>
-    </div>
+    <div class="filters" id="filters" hidden></div>
   </div>
 
   <div class="degraded" id="degraded" hidden></div>
@@ -438,6 +445,7 @@ mark { background:var(--mark-bg); color:var(--mark-fg); padding:0 2px; border-ra
 
   // ------------------------------------------------------------ landing
   function landing(stats) {
+    document.body.classList.add('start');
     var coverage = stats && stats.table_n
       ? '已收录 <b>' + stats.table_n + '</b> 张表、<b>' + stats.column_n +
         '</b> 个字段，其中 <b>' + stats.pending_n + '</b> 条说明待人工确认'
@@ -510,6 +518,7 @@ mark { background:var(--mark-bg); color:var(--mark-fg); padding:0 2px; border-ra
     var seq = ++state.seq,
         started = Date.now();
     state.query = text;
+    document.body.classList.remove('start');
     goEl.disabled = true;
     statusEl.hidden = true;
     filtersEl.hidden = true;
